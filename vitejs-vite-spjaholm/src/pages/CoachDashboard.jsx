@@ -87,15 +87,17 @@ function TeamScores() {
   return (
     <>
       <div className="card">
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button className={tab === 'team' ? '' : 'secondary'} style={{ fontSize: 14, padding: '0 8px' }} onClick={() => setTab('team')}>Team scores</button>
-          <button className={tab === 'roster' ? '' : 'secondary'} style={{ fontSize: 14, padding: '0 8px' }} onClick={() => setTab('roster')}>Roster</button>
-          <button className={tab === 'courses' ? '' : 'secondary'} style={{ fontSize: 14, padding: '0 8px' }} onClick={() => setTab('courses')}>Courses</button>
-        </div>
+        <label>Round</label>
+        <select value={selected} onChange={(e) => setSelected(e.target.value)}>
+          {rounds.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.courses?.name} · {r.played_on} · {r.type}
+            </option>
+          ))}
+        </select>
       </div>
 
       {loading && <p className="muted">Calculating…</p>}
-
       {result && (
         <>
           <TeamCard title="Boys — top 4 of 5" data={result.boys} list={result.boysList} />
