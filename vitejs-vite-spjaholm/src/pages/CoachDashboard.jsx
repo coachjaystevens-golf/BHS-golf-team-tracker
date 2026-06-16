@@ -6,12 +6,12 @@ export default function CoachDashboard() {
   const [tab, setTab] = useState('team');
 
   return (
-    <div className="content">
+     <div className="content">
       <div className="card">
-        <div className="stepper" style={{ gap: 6 }}>
-          <button className={tab === 'team' ? '' : 'secondary'} onClick={() => setTab('team')}>Team scores</button>
-          <button className={tab === 'roster' ? '' : 'secondary'} onClick={() => setTab('roster')}>Roster</button>
-          <button className={tab === 'courses' ? '' : 'secondary'} onClick={() => setTab('courses')}>Courses</button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button className={tab === 'team' ? '' : 'secondary'} style={{ fontSize: 14, padding: '0 8px' }} onClick={() => setTab('team')}>Team scores</button>
+          <button className={tab === 'roster' ? '' : 'secondary'} style={{ fontSize: 14, padding: '0 8px' }} onClick={() => setTab('roster')}>Roster</button>
+          <button className={tab === 'courses' ? '' : 'secondary'} style={{ fontSize: 14, padding: '0 8px' }} onClick={() => setTab('courses')}>Courses</button>
         </div>
       </div>
 
