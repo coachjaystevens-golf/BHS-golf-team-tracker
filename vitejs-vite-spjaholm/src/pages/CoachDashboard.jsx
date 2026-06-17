@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase.js';
 import { roundTotal, teamScore, formatToPar, toPar } from '../lib/scoring.js';
+import { useAuth } from '../AuthContext.jsx';
 
 export default function CoachDashboard() {
   const [tab, setTab] = useState('team');
@@ -27,6 +28,7 @@ export default function CoachDashboard() {
 }
 
 function TeamScores() {
+  const { seasons, seasonId, setSeasonId } = useAuth();
   const [rounds, setRounds] = useState([]);
   const [selected, setSelected] = useState('');
   const [result, setResult] = useState(null);
@@ -34,14 +36,17 @@ function TeamScores() {
 
   useEffect(() => {
     (async () => {
+      if (!seasonId) { setRounds([]); setSelected(''); return; }
       const { data } = await supabase
         .from('rounds')
         .select('id, played_on, type, courses ( name )')
+        .eq('season_id', seasonId)
         .order('played_on', { ascending: false });
       setRounds(data ?? []);
-      if (data?.length) setSelected(data[0].id);
+      setSelected(data?.length ? data[0].id : '');
+      setResult(null);
     })();
-  }, []);
+  }, [seasonId]);
 
   useEffect(() => {
     if (!selected) return;
@@ -90,15 +95,32 @@ function TeamScores() {
 
   return (
     <>
+      {seasons.length > 0 && (
+        <div className="card">
+          <label>Season</label>
+          <select value={seasonId} onChange={(e) => setSeasonId(e.target.value)}>
+            {seasons.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}{s.is_active ? ' (current)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="card">
         <label>Round</label>
-        <select value={selected} onChange={(e) => setSelected(e.target.value)}>
-          {rounds.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.courses?.name} · {r.played_on} · {r.type}
-            </option>
-          ))}
-        </select>
+        {rounds.length === 0 ? (
+          <p className="muted">No rounds in this season yet.</p>
+        ) : (
+          <select value={selected} onChange={(e) => setSelected(e.target.value)}>
+            {rounds.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.courses?.name} · {r.played_on} · {r.type}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {loading && <p className="muted">Calculating…</p>}
