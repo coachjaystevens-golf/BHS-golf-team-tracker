@@ -39,9 +39,11 @@ export default function Rounds() {
 
   async function createRound() {
     setError('');
+    // players may only create practice rounds; coaches choose the type
+    const roundType = isCoach ? type : 'practice';
     const { data, error } = await supabase
       .from('rounds')
-      .insert({ course_id: courseId, type, played_on: playedOn })
+      .insert({ course_id: courseId, type: roundType, played_on: playedOn })
       .select()
       .single();
     if (error) { setError(error.message); return; }
@@ -55,48 +57,56 @@ export default function Rounds() {
     <div className="content">
       {error && <div className="error">{error}</div>}
 
-      {isCoach && (
-        <div className="card">
-          {!showForm ? (
-            <button onClick={() => setShowForm(true)}>+ New round</button>
-          ) : (
-            <>
-              <h2>New round</h2>
-              {courses.length === 0 ? (
-                <p className="muted">
-                  Add a course first (Coach tab) before creating a round.
-                </p>
-              ) : (
-                <>
-                  <label>Course</label>
-                  <select value={courseId} onChange={(e) => setCourseId(e.target.value)}>
-                    {courses.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
+      <div className="card">
+        {!showForm ? (
+          <button onClick={() => setShowForm(true)}>
+            {isCoach ? '+ New round' : '+ New practice round'}
+          </button>
+        ) : (
+          <>
+            <h2>{isCoach ? 'New round' : 'New practice round'}</h2>
+            {courses.length === 0 ? (
+              <p className="muted">
+                {isCoach
+                  ? 'Add a course first (Coach tab) before creating a round.'
+                  : 'No courses available yet. Ask your coach to add one.'}
+              </p>
+            ) : (
+              <>
+                <label>Course</label>
+                <select value={courseId} onChange={(e) => setCourseId(e.target.value)}>
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
 
-                  <label>Type</label>
-                  <select value={type} onChange={(e) => setType(e.target.value)}>
-                    <option value="match">Match</option>
-                    <option value="practice">Practice</option>
-                  </select>
+                {isCoach && (
+                  <>
+                    <label>Type</label>
+                    <select value={type} onChange={(e) => setType(e.target.value)}>
+                      <option value="match">Match</option>
+                      <option value="practice">Practice</option>
+                    </select>
+                  </>
+                )}
 
-                  <label>Date</label>
-                  <input type="date" value={playedOn}
-                    onChange={(e) => setPlayedOn(e.target.value)} />
+                <label>Date</label>
+                <input type="date" value={playedOn}
+                  onChange={(e) => setPlayedOn(e.target.value)} />
 
-                  <div className="spacer" />
-                  <button onClick={createRound}>Create round</button>
-                  <div className="spacer" />
-                  <button className="secondary" onClick={() => setShowForm(false)}>
-                    Cancel
-                  </button>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      )}
+                <div className="spacer" />
+                <button onClick={createRound}>
+                  {isCoach ? 'Create round' : 'Create practice round'}
+                </button>
+                <div className="spacer" />
+                <button className="secondary" onClick={() => setShowForm(false)}>
+                  Cancel
+                </button>
+              </>
+            )}
+          </>
+        )}
+      </div>
 
       <p className="eyebrow">Rounds</p>
       {rounds.length === 0 && (
@@ -104,7 +114,7 @@ export default function Rounds() {
           <p className="muted">
             No rounds yet.{' '}
             {isCoach ? 'Create one above to get started.'
-                     : 'Your coach will set up rounds to score.'}
+                     : 'Create a practice round above, or your coach will set up matches.'}
           </p>
         </div>
       )}
