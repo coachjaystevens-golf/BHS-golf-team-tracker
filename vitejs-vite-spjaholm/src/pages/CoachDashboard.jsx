@@ -187,6 +187,10 @@ function Roster() {
       <div className="card">
         <h2>Add player</h2>
         {error && <div className="error">{error}</div>}
+        <p className="muted" style={{ marginBottom: 4 }}>
+          This is your permanent list of players. Adding someone here
+          makes them available to put on any season's roster below.
+        </p>
         <label>Name</label>
         <input value={name} onChange={(e) => setName(e.target.value)} />
         <label>Team</label>
@@ -197,11 +201,13 @@ function Roster() {
         <label>Grade (optional)</label>
         <input type="number" value={grade} onChange={(e) => setGrade(e.target.value)} />
         <div className="spacer" />
-        <button onClick={addPlayer}>Add to roster</button>
+        <button onClick={addPlayer}>Add to player list</button>
       </div>
 
-      <RosterList title="Boys" players={boys} />
-      <RosterList title="Girls" players={girls} />
+      <RosterList title="All players · Boys" players={boys} />
+      <RosterList title="All players · Girls" players={girls} />
+
+      <SeasonRoster allPlayers={players} />
     </>
   );
 }
@@ -229,6 +235,132 @@ function RosterList({ title, players }) {
             ))}
           </tbody>
         </table>
+      )}
+    </div>
+  );
+}
+
+// ---- Season Roster: two-list manager (on the team / available) ----
+function SeasonRoster({ allPlayers }) {
+  const [seasons, setSeasons] = useState([]);
+  const [seasonId, setSeasonId] = useState('');
+  const [onTeamIds, setOnTeamIds] = useState(new Set());
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  // load the list of seasons once
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from('seasons')
+        .select('id, name, is_active, starts_on')
+        .order('starts_on', { ascending: false });
+      setSeasons(data ?? []);
+      // default to the active season if there is one
+      const active = (data ?? []).find((s) => s.is_active);
+      setSeasonId(active ? active.id : (data?.[0]?.id ?? ''));
+    })();
+  }, []);
+
+  // whenever the selected season changes, load its roster
+  async function loadRoster(sid) {
+    if (!sid) return;
+    setLoading(true);
+    const { data } = await supabase
+      .from('season_players')
+      .select('player_id')
+      .eq('season_id', sid);
+    setOnTeamIds(new Set((data ?? []).map((r) => r.player_id)));
+    setLoading(false);
+  }
+  useEffect(() => { loadRoster(seasonId); }, [seasonId]);
+
+  async function addToTeam(playerId) {
+    setError('');
+    const { error } = await supabase
+      .from('season_players')
+      .insert({ season_id: seasonId, player_id: playerId });
+    if (error) { setError(error.message); return; }
+    setOnTeamIds((prev) => new Set(prev).add(playerId));
+  }
+
+  async function removeFromTeam(playerId) {
+    setError('');
+    const { error } = await supabase
+      .from('season_players')
+      .delete()
+      .eq('season_id', seasonId)
+      .eq('player_id', playerId);
+    if (error) { setError(error.message); return; }
+    setOnTeamIds((prev) => {
+      const next = new Set(prev);
+      next.delete(playerId);
+      return next;
+    });
+  }
+
+  const onTeam = allPlayers.filter((p) => onTeamIds.has(p.id));
+  const available = allPlayers.filter((p) => !onTeamIds.has(p.id));
+  const selectedSeason = seasons.find((s) => s.id === seasonId);
+
+  return (
+    <div className="card">
+      <h2>Season roster</h2>
+      <p className="muted" style={{ marginBottom: 4 }}>
+        Choose a season, then set who is on the team that year. A player
+        left off a season keeps all their history — they just aren't on
+        that year's team.
+      </p>
+
+      <label>Season</label>
+      <select value={seasonId} onChange={(e) => setSeasonId(e.target.value)}>
+        {seasons.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}{s.is_active ? ' (active)' : ''}
+          </option>
+        ))}
+      </select>
+
+      {error && <div className="error" style={{ marginTop: 10 }}>{error}</div>}
+      {loading && <p className="muted" style={{ marginTop: 10 }}>Loading roster…</p>}
+
+      {!loading && selectedSeason && (
+        <>
+          <p className="eyebrow" style={{ marginTop: 16 }}>
+            On the {selectedSeason.name} team ({onTeam.length})
+          </p>
+          {onTeam.length === 0 ? (
+            <p className="muted">No players on this season's team yet.</p>
+          ) : (
+            onTeam.map((p) => (
+              <div key={p.id} className="row-between" style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+                <span>{p.full_name} <span className="muted">· {p.gender}</span></span>
+                <button
+                  className="secondary"
+                  style={{ width: 'auto', minHeight: 38, fontSize: 13, color: 'var(--flag)', borderColor: 'var(--flag)' }}
+                  onClick={() => removeFromTeam(p.id)}
+                >Remove</button>
+              </div>
+            ))
+          )}
+
+          <p className="eyebrow" style={{ marginTop: 18 }}>
+            Available to add ({available.length})
+          </p>
+          {available.length === 0 ? (
+            <p className="muted">Everyone is already on this season's team.</p>
+          ) : (
+            available.map((p) => (
+              <div key={p.id} className="row-between" style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+                <span>{p.full_name} <span className="muted">· {p.gender}</span></span>
+                <button
+                  style={{ width: 'auto', minHeight: 38, fontSize: 13 }}
+                  onClick={() => addToTeam(p.id)}
+                >Add</button>
+              </div>
+            ))
+          )}
+        </>
       )}
     </div>
   );
@@ -337,10 +469,8 @@ function Seasons() {
     load();
   }
 
-  // make one season active and all others inactive
   async function makeActive(id) {
     setError('');
-    // turn everything off, then turn the chosen one on
     const { error: e1 } = await supabase
       .from('seasons')
       .update({ is_active: false })
