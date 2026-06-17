@@ -5,19 +5,23 @@ import { roundTotal, teamScore, formatToPar, toPar } from '../lib/scoring.js';
 export default function CoachDashboard() {
   const [tab, setTab] = useState('team');
 
+  const tabStyle = { fontSize: 13, padding: '0 6px' };
+
   return (
-     <div className="content">
+    <div className="content">
       <div className="card">
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button className={tab === 'team' ? '' : 'secondary'} style={{ fontSize: 14, padding: '0 8px' }} onClick={() => setTab('team')}>Team scores</button>
-          <button className={tab === 'roster' ? '' : 'secondary'} style={{ fontSize: 14, padding: '0 8px' }} onClick={() => setTab('roster')}>Roster</button>
-          <button className={tab === 'courses' ? '' : 'secondary'} style={{ fontSize: 14, padding: '0 8px' }} onClick={() => setTab('courses')}>Courses</button>
+        <div style={{ display: 'flex', gap: 5 }}>
+          <button className={tab === 'team' ? '' : 'secondary'} style={tabStyle} onClick={() => setTab('team')}>Scores</button>
+          <button className={tab === 'roster' ? '' : 'secondary'} style={tabStyle} onClick={() => setTab('roster')}>Roster</button>
+          <button className={tab === 'courses' ? '' : 'secondary'} style={tabStyle} onClick={() => setTab('courses')}>Courses</button>
+          <button className={tab === 'seasons' ? '' : 'secondary'} style={tabStyle} onClick={() => setTab('seasons')}>Seasons</button>
         </div>
       </div>
 
       {tab === 'team' && <TeamScores />}
       {tab === 'roster' && <Roster />}
       {tab === 'courses' && <Courses />}
+      {tab === 'seasons' && <Seasons />}
     </div>
   );
 }
@@ -98,6 +102,7 @@ function TeamScores() {
       </div>
 
       {loading && <p className="muted">Calculating…</p>}
+
       {result && (
         <>
           <TeamCard title="Boys — top 4 of 5" data={result.boys} list={result.boysList} />
@@ -287,6 +292,123 @@ function Courses() {
             </div>
           </div>
         ))}
+      </div>
+    </>
+  );
+}
+
+function Seasons() {
+  const [seasons, setSeasons] = useState([]);
+  const [name, setName] = useState('');
+  const [startsOn, setStartsOn] = useState('');
+  const [endsOn, setEndsOn] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    const { data } = await supabase
+      .from('seasons')
+      .select('id, name, starts_on, ends_on, is_active')
+      .order('starts_on', { ascending: false });
+    setSeasons(data ?? []);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function addSeason() {
+    setError('');
+    if (!name.trim() || !startsOn || !endsOn) {
+      setError('Please fill in a name, start date, and end date.');
+      return;
+    }
+    if (endsOn <= startsOn) {
+      setError('The end date must be after the start date.');
+      return;
+    }
+    setBusy(true);
+    const { error } = await supabase.from('seasons').insert({
+      name: name.trim(),
+      starts_on: startsOn,
+      ends_on: endsOn,
+      is_active: false,
+    });
+    setBusy(false);
+    if (error) { setError(error.message); return; }
+    setName(''); setStartsOn(''); setEndsOn('');
+    load();
+  }
+
+  // make one season active and all others inactive
+  async function makeActive(id) {
+    setError('');
+    // turn everything off, then turn the chosen one on
+    const { error: e1 } = await supabase
+      .from('seasons')
+      .update({ is_active: false })
+      .neq('id', id);
+    const { error: e2 } = await supabase
+      .from('seasons')
+      .update({ is_active: true })
+      .eq('id', id);
+    if (e1 || e2) { setError((e1 || e2).message); return; }
+    load();
+  }
+
+  return (
+    <>
+      <div className="card">
+        <h2>New season</h2>
+        {error && <div className="error">{error}</div>}
+        <p className="muted" style={{ marginBottom: 4 }}>
+          A season is one team-year. Example: "2027 Season",
+          May 2027 through May 2028.
+        </p>
+        <label>Season name</label>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. 2027 Season"
+        />
+        <label>Start date</label>
+        <input type="date" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} />
+        <label>End date</label>
+        <input type="date" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} />
+        <div className="spacer" />
+        <button onClick={addSeason} disabled={busy}>
+          {busy ? 'Adding…' : 'Add season'}
+        </button>
+      </div>
+
+      <div className="card">
+        <h2>Seasons</h2>
+        {seasons.length === 0 ? (
+          <p className="muted">No seasons yet.</p>
+        ) : (
+          seasons.map((s) => (
+            <div key={s.id} style={{ paddingBottom: 14, borderBottom: '1px solid var(--line)', marginBottom: 14 }}>
+              <div className="row-between">
+                <div>
+                  <strong>{s.name}</strong>
+                  {s.is_active && (
+                    <span className="chip under" style={{ marginLeft: 8 }}>Active</span>
+                  )}
+                  <div className="muted">{s.starts_on} → {s.ends_on}</div>
+                </div>
+              </div>
+              {!s.is_active && (
+                <>
+                  <div className="spacer" />
+                  <button className="secondary" onClick={() => makeActive(s.id)}>
+                    Make this the active season
+                  </button>
+                </>
+              )}
+            </div>
+          ))
+        )}
+        <p className="muted">
+          New rounds attach to the active season. Set a new season active
+          when this year's team is formed.
+        </p>
       </div>
     </>
   );
