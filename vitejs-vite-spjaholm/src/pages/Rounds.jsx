@@ -10,6 +10,7 @@ export default function Rounds() {
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [filter, setFilter] = useState('all'); // 'all' | 'match' | 'practice'
 
   const [showForm, setShowForm] = useState(false);
   const [courseId, setCourseId] = useState('');
@@ -39,7 +40,6 @@ export default function Rounds() {
 
   async function createRound() {
     setError('');
-    // players may only create practice rounds; coaches choose the type
     const roundType = isCoach ? type : 'practice';
     const { data, error } = await supabase
       .from('rounds')
@@ -52,6 +52,12 @@ export default function Rounds() {
   }
 
   if (loading) return <div className="content"><p className="muted">Loading rounds…</p></div>;
+
+  // apply the active filter to the rounds list
+  const visibleRounds = rounds.filter((r) => {
+    if (filter === 'all') return true;
+    return r.type === filter;
+  });
 
   return (
     <div className="content">
@@ -108,18 +114,39 @@ export default function Rounds() {
         )}
       </div>
 
+      <div className="card">
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            className={filter === 'all' ? '' : 'secondary'}
+            style={{ fontSize: 14, padding: '0 8px' }}
+            onClick={() => setFilter('all')}
+          >All</button>
+          <button
+            className={filter === 'match' ? '' : 'secondary'}
+            style={{ fontSize: 14, padding: '0 8px' }}
+            onClick={() => setFilter('match')}
+          >Matches</button>
+          <button
+            className={filter === 'practice' ? '' : 'secondary'}
+            style={{ fontSize: 14, padding: '0 8px' }}
+            onClick={() => setFilter('practice')}
+          >Practice</button>
+        </div>
+      </div>
+
       <p className="eyebrow">Rounds</p>
-      {rounds.length === 0 && (
+      {visibleRounds.length === 0 && (
         <div className="card">
           <p className="muted">
-            No rounds yet.{' '}
-            {isCoach ? 'Create one above to get started.'
-                     : 'Create a practice round above, or your coach will set up matches.'}
+            {rounds.length === 0
+              ? (isCoach ? 'No rounds yet. Create one above to get started.'
+                         : 'No rounds yet. Create a practice round above, or your coach will set up matches.')
+              : 'No rounds match this filter.'}
           </p>
         </div>
       )}
 
-      {rounds.map((r) => (
+      {visibleRounds.map((r) => (
         <div key={r.id} className="card" onClick={() => navigate(`/round/${r.id}`)}
              style={{ cursor: 'pointer' }}>
           <div className="row-between">
