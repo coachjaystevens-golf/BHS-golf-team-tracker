@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../AuthContext.jsx';
 
 export default function Rounds() {
-  const { isCoach } = useAuth();
+  const { isCoach, seasons, seasonId, setSeasonId, activeSeason } = useAuth();
   const navigate = useNavigate();
   const [rounds, setRounds] = useState([]);
   const [courses, setCourses] = useState([]);
@@ -19,11 +19,14 @@ export default function Rounds() {
     new Date().toISOString().slice(0, 10)
   );
 
+  // load rounds for the selected season
   async function load() {
+    if (!seasonId) { setRounds([]); setLoading(false); return; }
     setLoading(true);
     const { data: r, error: re } = await supabase
       .from('rounds')
       .select('id, played_on, type, courses ( name )')
+      .eq('season_id', seasonId)
       .order('played_on', { ascending: false });
     const { data: c } = await supabase
       .from('courses')
@@ -36,14 +39,24 @@ export default function Rounds() {
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [seasonId]);
 
   async function createRound() {
     setError('');
+    // new rounds always attach to the ACTIVE season, not the one being viewed
+    if (!activeSeason) {
+      setError('No active season is set. Ask your coach to set one.');
+      return;
+    }
     const roundType = isCoach ? type : 'practice';
     const { data, error } = await supabase
       .from('rounds')
-      .insert({ course_id: courseId, type: roundType, played_on: playedOn })
+      .insert({
+        course_id: courseId,
+        type: roundType,
+        played_on: playedOn,
+        season_id: activeSeason.id,
+      })
       .select()
       .single();
     if (error) { setError(error.message); return; }
@@ -53,15 +66,36 @@ export default function Rounds() {
 
   if (loading) return <div className="content"><p className="muted">Loading rounds…</p></div>;
 
-  // apply the active filter to the rounds list
   const visibleRounds = rounds.filter((r) => {
     if (filter === 'all') return true;
     return r.type === filter;
   });
 
+  const viewingActive = activeSeason && seasonId === activeSeason.id;
+
   return (
     <div className="content">
       {error && <div className="error">{error}</div>}
+
+      {/* season switcher */}
+      {seasons.length > 0 && (
+        <div className="card">
+          <label>Season</label>
+          <select value={seasonId} onChange={(e) => setSeasonId(e.target.value)}>
+            {seasons.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}{s.is_active ? ' (current)' : ''}
+              </option>
+            ))}
+          </select>
+          {!viewingActive && (
+            <p className="muted" style={{ marginTop: 8 }}>
+              You're viewing a past season. New rounds still go to the
+              current season.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="card">
         {!showForm ? (
@@ -139,8 +173,8 @@ export default function Rounds() {
         <div className="card">
           <p className="muted">
             {rounds.length === 0
-              ? (isCoach ? 'No rounds yet. Create one above to get started.'
-                         : 'No rounds yet. Create a practice round above, or your coach will set up matches.')
+              ? (isCoach ? 'No rounds in this season yet. Create one above to get started.'
+                         : 'No rounds in this season yet. Create a practice round above, or your coach will set up matches.')
               : 'No rounds match this filter.'}
           </p>
         </div>
