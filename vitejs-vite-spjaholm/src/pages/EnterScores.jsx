@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../AuthContext.jsx';
 import { toPar, formatToPar, roundTotal } from '../lib/scoring.js';
@@ -7,6 +7,7 @@ import { toPar, formatToPar, roundTotal } from '../lib/scoring.js';
 export default function EnterScores() {
   const { roundId } = useParams();
   const { user, isCoach } = useAuth();
+  const navigate = useNavigate();
 
   const [round, setRound] = useState(null);
   const [par, setPar] = useState([]);
@@ -15,6 +16,8 @@ export default function EnterScores() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [savedNote, setSavedNote] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -71,6 +74,14 @@ export default function EnterScores() {
     if (error) { setError(error.message); return; }
     setSavedNote(`Hole ${hole} saved`);
     setTimeout(() => setSavedNote(''), 1500);
+  }
+
+  async function deleteRound() {
+    setDeleting(true);
+    setError('');
+    const { error } = await supabase.from('rounds').delete().eq('id', roundId);
+    if (error) { setError(error.message); setDeleting(false); return; }
+    navigate('/');
   }
 
   if (loading) return <div className="content"><p className="muted">Loading round…</p></div>;
@@ -136,6 +147,37 @@ export default function EnterScores() {
           );
         })}
       </div>
+
+      {isCoach && (
+        <div className="card">
+          {!confirmDelete ? (
+            <button
+              className="secondary"
+              style={{ color: 'var(--flag)', borderColor: 'var(--flag)' }}
+              onClick={() => setConfirmDelete(true)}
+            >
+              Delete this round
+            </button>
+          ) : (
+            <>
+              <p className="muted" style={{ marginBottom: 10 }}>
+                Delete this round and all its scores? This can't be undone.
+              </p>
+              <button
+                style={{ background: 'var(--flag)' }}
+                onClick={deleteRound}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting…' : 'Yes, delete it'}
+              </button>
+              <div className="spacer" />
+              <button className="secondary" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
