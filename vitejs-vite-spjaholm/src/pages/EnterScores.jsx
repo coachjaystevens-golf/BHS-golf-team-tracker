@@ -16,6 +16,8 @@ export default function EnterScores() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [savedNote, setSavedNote] = useState('');
+  const [comment, setComment] = useState('');
+  const [commentSaved, setCommentSaved] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -46,6 +48,14 @@ export default function EnterScores() {
         const map = {};
         (existing ?? []).forEach((s) => { map[s.hole_number] = s.strokes; });
         setStrokes(map);
+
+        const { data: cmt } = await supabase
+          .from('round_comments')
+          .select('body')
+          .eq('round_id', roundId)
+          .eq('player_id', p.id)
+          .maybeSingle();
+        if (cmt) setComment(cmt.body);
       }
       setLoading(false);
     })();
@@ -74,6 +84,23 @@ export default function EnterScores() {
     if (error) { setError(error.message); return; }
     setSavedNote(`Hole ${hole} saved`);
     setTimeout(() => setSavedNote(''), 1500);
+  }
+
+  async function saveComment() {
+    if (!playerId) {
+      setError('You are not linked to the roster yet. Ask your coach to add you.');
+      return;
+    }
+    if (!comment.trim()) return;
+    const { error } = await supabase
+      .from('round_comments')
+      .upsert(
+        { round_id: roundId, player_id: playerId, body: comment.trim(), updated_at: new Date().toISOString() },
+        { onConflict: 'round_id,player_id' }
+      );
+    if (error) { setError(error.message); return; }
+    setCommentSaved(true);
+    setTimeout(() => setCommentSaved(false), 1500);
   }
 
   async function deleteRound() {
@@ -158,6 +185,29 @@ export default function EnterScores() {
           );
         })}
       </div>
+
+      {playerId && (
+        <div className="card">
+          <h2>Round notes</h2>
+          <p className="muted" style={{ marginBottom: 6 }}>
+            Anything worth remembering — a lost ball, a great drive, what you
+            hit on a tough hole. Your coach can see this.
+          </p>
+          <textarea
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            rows={4}
+            style={{
+              width: '100%', borderRadius: 10, border: '1.5px solid var(--line)',
+              padding: 12, fontSize: 16, fontFamily: 'var(--font-body)', color: 'var(--ink)',
+            }}
+            placeholder="Write a note about this round…"
+          />
+          {commentSaved && <div className="success">Note saved</div>}
+          <div className="spacer" />
+          <button onClick={saveComment} disabled={!comment.trim()}>Save note</button>
+        </div>
+      )}
 
       {isCoach && (
         <div className="card">
