@@ -24,7 +24,7 @@ export default function EnterScores() {
       setLoading(true);
       const { data: r, error: re } = await supabase
         .from('rounds')
-        .select('id, played_on, type, course_id, courses ( name, holes, par_per_hole )')
+        .select('id, played_on, type, course_id, start_hole, end_hole, courses ( name, holes, par_per_hole )')
         .eq('id', roundId)
         .single();
       if (re) { setError(re.message); setLoading(false); return; }
@@ -87,17 +87,28 @@ export default function EnterScores() {
   if (loading) return <div className="content"><p className="muted">Loading round…</p></div>;
   if (error) return <div className="content"><div className="error">{error}</div></div>;
 
-  const holes = round.courses?.holes ?? 18;
-  const enteredScores = Object.entries(strokes).map(([h, s]) => ({
-    hole_number: Number(h), strokes: s,
-  }));
+  // which holes this round covers
+  const startHole = round.start_hole ?? 1;
+  const endHole = round.end_hole ?? (round.courses?.holes ?? 18);
+  const holeNumbers = [];
+  for (let h = startHole; h <= endHole; h++) holeNumbers.push(h);
+
+  // only count scores within this round's hole range
+  const enteredScores = Object.entries(strokes)
+    .map(([h, s]) => ({ hole_number: Number(h), strokes: s }))
+    .filter((s) => s.hole_number >= startHole && s.hole_number <= endHole);
   const total = roundTotal(enteredScores);
   const tp = toPar(enteredScores, par);
+
+  const rangeLabel =
+    startHole === 1 && endHole === 9 ? 'Front 9'
+    : startHole === 10 && endHole === 18 ? 'Back 9'
+    : `${endHole - startHole + 1} holes`;
 
   return (
     <div className="content">
       <div className="card">
-        <p className="eyebrow">{round.type} · {round.played_on}</p>
+        <p className="eyebrow">{round.type} · {round.played_on} · {rangeLabel}</p>
         <h2>{round.courses?.name}</h2>
         <div className="stat-grid">
           <div className="stat-box">
@@ -120,7 +131,7 @@ export default function EnterScores() {
       )}
 
       <div className="card">
-        {Array.from({ length: holes }, (_, i) => i + 1).map((hole) => {
+        {holeNumbers.map((hole) => {
           const holePar = par[hole - 1];
           const val = strokes[hole] ?? holePar ?? 4;
           const diff = holePar ? val - holePar : null;
