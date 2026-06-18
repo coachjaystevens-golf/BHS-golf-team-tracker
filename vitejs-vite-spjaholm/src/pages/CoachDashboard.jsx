@@ -76,6 +76,7 @@ function TeamScores() {
 
       const all = Object.values(byPlayer).map((p) => ({
         ...p,
+        scores: [...p.scores].sort((a, b) => a.hole_number - b.hole_number),
         total: roundTotal(p.scores),
         tp: toPar(p.scores, par),
       }));
@@ -88,6 +89,7 @@ function TeamScores() {
         girls: teamScore(girls, 'girls'),
         boysList: boys,
         girlsList: girls,
+        par,
       });
       setLoading(false);
     })();
@@ -127,16 +129,18 @@ function TeamScores() {
 
       {result && (
         <>
-          <TeamCard title="Boys — top 4 of 5" data={result.boys} list={result.boysList} />
-          <TeamCard title="Girls — top 2 of 3" data={result.girls} list={result.girlsList} />
+          <TeamCard title="Boys — top 4 of 5" data={result.boys} list={result.boysList} par={result.par} />
+          <TeamCard title="Girls — top 2 of 3" data={result.girls} list={result.girlsList} par={result.par} />
         </>
       )}
     </>
   );
 }
 
-function TeamCard({ title, data, list }) {
+function TeamCard({ title, data, list, par }) {
   const droppedIds = new Set(data.dropped.map((p) => p.player_id));
+  const [expandedId, setExpandedId] = useState(null);
+
   return (
     <div className="card">
       <h2>{title}</h2>
@@ -150,22 +154,83 @@ function TeamCard({ title, data, list }) {
               Team total {data.complete ? '' : '(need more players)'}
             </div>
           </div>
+
           <table>
             <thead>
               <tr><th>Player</th><th className="num">Total</th><th className="num">To par</th></tr>
             </thead>
             <tbody>
-              {[...list].sort((a, b) => a.total - b.total).map((p) => (
-                <tr key={p.player_id} className={droppedIds.has(p.player_id) ? 'dropped' : ''}>
-                  <td>{p.full_name}</td>
-                  <td className="num">{p.total}</td>
-                  <td className="num">{formatToPar(p.tp)}</td>
-                </tr>
-              ))}
+              {[...list].sort((a, b) => a.total - b.total).map((p) => {
+                const isOpen = expandedId === p.player_id;
+                return (
+                  <tr
+                    key={p.player_id}
+                    className={droppedIds.has(p.player_id) ? 'dropped' : ''}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setExpandedId(isOpen ? null : p.player_id)}
+                  >
+                    <td>{isOpen ? '▾ ' : '▸ '}{p.full_name}</td>
+                    <td className="num">{p.total}</td>
+                    <td className="num">{formatToPar(p.tp)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+
+          {/* hole-by-hole for the expanded player */}
+          {expandedId && (() => {
+            const p = list.find((x) => x.player_id === expandedId);
+            if (!p) return null;
+            return (
+              <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+                <p className="eyebrow">{p.full_name} — hole by hole</p>
+                <div style={{ overflowX: 'auto' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Hole</th>
+                        {p.scores.map((s) => (
+                          <th key={s.hole_number} className="num">{s.hole_number}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="muted">Par</td>
+                        {p.scores.map((s) => (
+                          <td key={s.hole_number} className="num muted">
+                            {par[s.hole_number - 1] ?? '—'}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td>Score</td>
+                        {p.scores.map((s) => {
+                          const hp = par[s.hole_number - 1];
+                          const diff = hp ? s.strokes - hp : null;
+                          const color = diff === null ? 'inherit'
+                            : diff < 0 ? 'var(--green-700)'
+                            : diff > 0 ? 'var(--flag)' : 'inherit';
+                          return (
+                            <td key={s.hole_number} className="num" style={{ color, fontWeight: diff !== 0 ? 700 : 400 }}>
+                              {s.strokes}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="muted" style={{ marginTop: 6 }}>
+                  Green = under par · red = over par
+                </p>
+              </div>
+            );
+          })()}
+
           <p className="muted" style={{ marginTop: 8 }}>
-            Struck-through players were dropped from the team total.
+            Tap a player to see their hole-by-hole. Struck-through players were dropped from the team total.
           </p>
         </>
       )}
