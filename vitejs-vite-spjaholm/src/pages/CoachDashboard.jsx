@@ -57,6 +57,13 @@ function TeamScores() {
         .select('strokes, hole_number, players ( id, full_name, gender ), rounds ( courses ( par_per_hole ) )')
         .eq('round_id', selected);
 
+      const { data: commentRows } = await supabase
+        .from('round_comments')
+        .select('player_id, body')
+        .eq('round_id', selected);
+      const commentsByPlayer = {};
+      for (const c of commentRows ?? []) commentsByPlayer[c.player_id] = c.body;
+
       const byPlayer = {};
       let par = [];
       for (const r of rows ?? []) {
@@ -79,6 +86,7 @@ function TeamScores() {
         scores: [...p.scores].sort((a, b) => a.hole_number - b.hole_number),
         total: roundTotal(p.scores),
         tp: toPar(p.scores, par),
+        comment: commentsByPlayer[p.player_id] ?? null,
       }));
 
       const boys = all.filter((p) => p.gender === 'boys');
@@ -225,6 +233,12 @@ function TeamCard({ title, data, list, par }) {
                 <p className="muted" style={{ marginTop: 6 }}>
                   Green = under par · red = over par
                 </p>
+                {p.comment && (
+                  <div style={{ marginTop: 10, background: 'var(--green-100)', borderRadius: 10, padding: 12 }}>
+                    <p className="eyebrow" style={{ marginBottom: 4 }}>Player note</p>
+                    <p style={{ fontSize: 14 }}>{p.comment}</p>
+                  </div>
+                )}
               </div>
             );
           })()}
