@@ -10,27 +10,27 @@ export default function Rounds() {
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState('all'); // 'all' | 'match' | 'practice'
+  const [filter, setFilter] = useState('all');
 
   const [showForm, setShowForm] = useState(false);
   const [courseId, setCourseId] = useState('');
   const [type, setType] = useState('match');
+  const [holesChoice, setHolesChoice] = useState('full'); // 'full' | 'front' | 'back'
   const [playedOn, setPlayedOn] = useState(
     new Date().toISOString().slice(0, 10)
   );
 
-  // load rounds for the selected season
   async function load() {
     if (!seasonId) { setRounds([]); setLoading(false); return; }
     setLoading(true);
     const { data: r, error: re } = await supabase
       .from('rounds')
-      .select('id, played_on, type, courses ( name )')
+      .select('id, played_on, type, start_hole, end_hole, courses ( name )')
       .eq('season_id', seasonId)
       .order('played_on', { ascending: false });
     const { data: c } = await supabase
       .from('courses')
-      .select('id, name')
+      .select('id, name, holes')
       .order('name');
     if (re) setError(re.message);
     setRounds(r ?? []);
@@ -41,14 +41,26 @@ export default function Rounds() {
 
   useEffect(() => { load(); }, [seasonId]);
 
+  const selectedCourse = courses.find((c) => c.id === courseId);
+  const courseIs18 = selectedCourse?.holes === 18;
+
   async function createRound() {
     setError('');
-    // new rounds always attach to the ACTIVE season, not the one being viewed
     if (!activeSeason) {
       setError('No active season is set. Ask your coach to set one.');
       return;
     }
     const roundType = isCoach ? type : 'practice';
+
+    // figure out the hole range
+    let startHole = 1;
+    let endHole = selectedCourse?.holes ?? 18;
+    if (courseIs18) {
+      if (holesChoice === 'front') { startHole = 1; endHole = 9; }
+      else if (holesChoice === 'back') { startHole = 10; endHole = 18; }
+      else { startHole = 1; endHole = 18; }
+    }
+
     const { data, error } = await supabase
       .from('rounds')
       .insert({
@@ -56,6 +68,8 @@ export default function Rounds() {
         type: roundType,
         played_on: playedOn,
         season_id: activeSeason.id,
+        start_hole: startHole,
+        end_hole: endHole,
       })
       .select()
       .single();
@@ -73,11 +87,19 @@ export default function Rounds() {
 
   const viewingActive = activeSeason && seasonId === activeSeason.id;
 
+  // label for a round's hole range
+  const rangeLabel = (r) => {
+    if (r.start_hole === 1 && r.end_hole === 9) return 'Front 9';
+    if (r.start_hole === 10 && r.end_hole === 18) return 'Back 9';
+    if (r.start_hole === 1 && r.end_hole === 9) return '9 holes';
+    const count = r.end_hole - r.start_hole + 1;
+    return count === 9 ? '9 holes' : '18 holes';
+  };
+
   return (
     <div className="content">
       {error && <div className="error">{error}</div>}
 
-      {/* season switcher */}
       {seasons.length > 0 && (
         <div className="card">
           <label>Season</label>
@@ -116,9 +138,20 @@ export default function Rounds() {
                 <label>Course</label>
                 <select value={courseId} onChange={(e) => setCourseId(e.target.value)}>
                   {courses.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                    <option key={c.id} value={c.id}>{c.name} ({c.holes} holes)</option>
                   ))}
                 </select>
+
+                {courseIs18 && (
+                  <>
+                    <label>Holes</label>
+                    <select value={holesChoice} onChange={(e) => setHolesChoice(e.target.value)}>
+                      <option value="full">Full 18</option>
+                      <option value="front">Front 9 (holes 1–9)</option>
+                      <option value="back">Back 9 (holes 10–18)</option>
+                    </select>
+                  </>
+                )}
 
                 {isCoach && (
                   <>
@@ -186,7 +219,7 @@ export default function Rounds() {
           <div className="row-between">
             <div>
               <strong>{r.courses?.name ?? 'Course'}</strong>
-              <div className="muted">{r.played_on}</div>
+              <div className="muted">{r.played_on} · {rangeLabel(r)}</div>
             </div>
             <span className="chip even" style={{ textTransform: 'capitalize' }}>
               {r.type}
