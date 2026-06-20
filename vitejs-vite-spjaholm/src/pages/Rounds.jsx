@@ -116,6 +116,8 @@ export default function Rounds() {
               current season.
             </p>
           )}
+          <div className="spacer" />
+          <button className="secondary" onClick={load}>↻ Refresh</button>
         </div>
       )}
 
@@ -230,3 +232,4 @@ export default function Rounds() {
     </div>
   );
 }
+
