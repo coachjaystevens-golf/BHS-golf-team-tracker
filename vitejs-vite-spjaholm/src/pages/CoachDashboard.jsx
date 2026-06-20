@@ -48,60 +48,60 @@ function TeamScores() {
     })();
   }, [seasonId]);
 
-  useEffect(() => {
+  async function loadScores() {
     if (!selected) return;
-    (async () => {
-      setLoading(true);
-      const { data: rows } = await supabase
-        .from('scores')
-        .select('strokes, hole_number, players ( id, full_name, gender ), rounds ( courses ( par_per_hole ) )')
-        .eq('round_id', selected);
+    setLoading(true);
+    const { data: rows } = await supabase
+      .from('scores')
+      .select('strokes, hole_number, players ( id, full_name, gender ), rounds ( courses ( par_per_hole ) )')
+      .eq('round_id', selected);
 
-      const { data: commentRows } = await supabase
-        .from('round_comments')
-        .select('player_id, body')
-        .eq('round_id', selected);
-      const commentsByPlayer = {};
-      for (const c of commentRows ?? []) commentsByPlayer[c.player_id] = c.body;
+    const { data: commentRows } = await supabase
+      .from('round_comments')
+      .select('player_id, body')
+      .eq('round_id', selected);
+    const commentsByPlayer = {};
+    for (const c of commentRows ?? []) commentsByPlayer[c.player_id] = c.body;
 
-      const byPlayer = {};
-      let par = [];
-      for (const r of rows ?? []) {
-        par = r.rounds?.courses?.par_per_hole ?? par;
-        const pid = r.players?.id;
-        if (!pid) continue;
-        if (!byPlayer[pid]) {
-          byPlayer[pid] = {
-            player_id: pid,
-            full_name: r.players.full_name,
-            gender: r.players.gender,
-            scores: [],
-          };
-        }
-        byPlayer[pid].scores.push({ hole_number: r.hole_number, strokes: r.strokes });
+    const byPlayer = {};
+    let par = [];
+    for (const r of rows ?? []) {
+      par = r.rounds?.courses?.par_per_hole ?? par;
+      const pid = r.players?.id;
+      if (!pid) continue;
+      if (!byPlayer[pid]) {
+        byPlayer[pid] = {
+          player_id: pid,
+          full_name: r.players.full_name,
+          gender: r.players.gender,
+          scores: [],
+        };
       }
+      byPlayer[pid].scores.push({ hole_number: r.hole_number, strokes: r.strokes });
+    }
 
-      const all = Object.values(byPlayer).map((p) => ({
-        ...p,
-        scores: [...p.scores].sort((a, b) => a.hole_number - b.hole_number),
-        total: roundTotal(p.scores),
-        tp: toPar(p.scores, par),
-        comment: commentsByPlayer[p.player_id] ?? null,
-      }));
+    const all = Object.values(byPlayer).map((p) => ({
+      ...p,
+      scores: [...p.scores].sort((a, b) => a.hole_number - b.hole_number),
+      total: roundTotal(p.scores),
+      tp: toPar(p.scores, par),
+      comment: commentsByPlayer[p.player_id] ?? null,
+    }));
 
-      const boys = all.filter((p) => p.gender === 'boys');
-      const girls = all.filter((p) => p.gender === 'girls');
+    const boys = all.filter((p) => p.gender === 'boys');
+    const girls = all.filter((p) => p.gender === 'girls');
 
-      setResult({
-        boys: teamScore(boys, 'boys'),
-        girls: teamScore(girls, 'girls'),
-        boysList: boys,
-        girlsList: girls,
-        par,
-      });
-      setLoading(false);
-    })();
-  }, [selected]);
+    setResult({
+      boys: teamScore(boys, 'boys'),
+      girls: teamScore(girls, 'girls'),
+      boysList: boys,
+      girlsList: girls,
+      par,
+    });
+    setLoading(false);
+  }
+
+  useEffect(() => { loadScores(); }, [selected]);
 
   return (
     <>
@@ -130,6 +130,12 @@ function TeamScores() {
               </option>
             ))}
           </select>
+        )}
+        {rounds.length > 0 && (
+          <>
+            <div className="spacer" />
+            <button className="secondary" onClick={loadScores}>↻ Refresh scores</button>
+          </>
         )}
       </div>
 
