@@ -11,6 +11,7 @@ export function AuthProvider({ children }) {
 
   const [seasons, setSeasons] = useState([]);
   const [seasonId, setSeasonId] = useState('');
+  const [recovery, setRecovery] = useState(false); // true when arriving via password reset link
 
   async function loadProfile(userId) {
     const { data } = await supabase
@@ -55,7 +56,8 @@ export function AuthProvider({ children }) {
       setLoading(false);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true);
       setUser(session?.user ?? null);
       if (session?.user) loadAll(session.user.id);
       else { setProfile(null); setPlayerRow(null); }
@@ -86,6 +88,14 @@ export function AuthProvider({ children }) {
     signUp: (email, password) =>
       supabase.auth.signUp({ email, password }),
     signOut: () => supabase.auth.signOut(),
+    recovery,
+    clearRecovery: () => setRecovery(false),
+    requestPasswordReset: (email) =>
+      supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin,
+      }),
+    updatePassword: (newPassword) =>
+      supabase.auth.updateUser({ password: newPassword }),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
