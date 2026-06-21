@@ -12,7 +12,8 @@ export default function EnterScores() {
   const [round, setRound] = useState(null);
   const [par, setPar] = useState([]);
   const [playerId, setPlayerId] = useState(null);
-  const [strokes, setStrokes] = useState({});
+  // per-hole data: { [hole]: { strokes, putts, fairway, gir } }
+  const [holeData, setHoleData] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [savedNote, setSavedNote] = useState('');
@@ -42,12 +43,19 @@ export default function EnterScores() {
         setPlayerId(p.id);
         const { data: existing } = await supabase
           .from('scores')
-          .select('hole_number, strokes')
+          .select('hole_number, strokes, putts, fairway_hit, green_in_regulation')
           .eq('round_id', roundId)
           .eq('player_id', p.id);
         const map = {};
-        (existing ?? []).forEach((s) => { map[s.hole_number] = s.strokes; });
-        setStrokes(map);
+        (existing ?? []).forEach((s) => {
+          map[s.hole_number] = {
+            strokes: s.strokes,
+            putts: s.putts ?? null,
+            fairway: s.fairway_hit ?? null,
+            gir: s.green_in_regulation ?? null,
+          };
+        });
+        setHoleData(map);
 
         const { data: cmt } = await supabase
           .from('round_comments')
@@ -61,11 +69,32 @@ export default function EnterScores() {
     })();
   }, [roundId, user.id]);
 
-  function adjust(hole, delta) {
-    setStrokes((prev) => {
-      const cur = prev[hole] ?? par[hole - 1] ?? 4;
+  function getHole(hole) {
+    return holeData[hole] ?? { strokes: par[hole - 1] ?? 4, putts: null, fairway: null, gir: null };
+  }
+
+  function adjustStrokes(hole, delta) {
+    setHoleData((prev) => {
+      const cur = prev[hole]?.strokes ?? par[hole - 1] ?? 4;
       const next = Math.min(20, Math.max(1, cur + delta));
-      return { ...prev, [hole]: next };
+      return { ...prev, [hole]: { ...getHole(hole), ...prev[hole], strokes: next } };
+    });
+  }
+
+  function adjustPutts(hole, delta) {
+    setHoleData((prev) => {
+      const cur = prev[hole]?.putts ?? 2;
+      const next = Math.min(15, Math.max(0, cur + delta));
+      return { ...prev, [hole]: { ...getHole(hole), ...prev[hole], putts: next } };
+    });
+  }
+
+  function toggle(hole, field) {
+    setHoleData((prev) => {
+      const cur = prev[hole]?.[field];
+      // cycle: null -> true -> false -> null
+      const next = cur === null || cur === undefined ? true : cur === true ? false : null;
+      return { ...prev, [hole]: { ...getHole(hole), ...prev[hole], [field]: next } };
     });
   }
 
@@ -74,11 +103,20 @@ export default function EnterScores() {
       setError('You are not linked to the roster yet. Ask your coach to add you.');
       return;
     }
-    const value = strokes[hole] ?? par[hole - 1] ?? 4;
+    const h = getHole(hole);
+    const strokes = h.strokes ?? par[hole - 1] ?? 4;
     const { error } = await supabase
       .from('scores')
       .upsert(
-        { round_id: roundId, player_id: playerId, hole_number: hole, strokes: value },
+        {
+          round_id: roundId,
+          player_id: playerId,
+          hole_number: hole,
+          strokes,
+          putts: h.putts,
+          fairway_hit: h.fairway,
+          green_in_regulation: h.gir,
+        },
         { onConflict: 'round_id,player_id,hole_number' }
       );
     if (error) { setError(error.message); return; }
@@ -114,16 +152,14 @@ export default function EnterScores() {
   if (loading) return <div className="content"><p className="muted">Loading round…</p></div>;
   if (error) return <div className="content"><div className="error">{error}</div></div>;
 
-  // which holes this round covers
   const startHole = round.start_hole ?? 1;
   const endHole = round.end_hole ?? (round.courses?.holes ?? 18);
   const holeNumbers = [];
   for (let h = startHole; h <= endHole; h++) holeNumbers.push(h);
 
-  // only count scores within this round's hole range
-  const enteredScores = Object.entries(strokes)
-    .map(([h, s]) => ({ hole_number: Number(h), strokes: s }))
-    .filter((s) => s.hole_number >= startHole && s.hole_number <= endHole);
+  const enteredScores = holeNumbers
+    .filter((h) => holeData[h])
+    .map((h) => ({ hole_number: h, strokes: holeData[h].strokes }));
   const total = roundTotal(enteredScores);
   const tp = toPar(enteredScores, par);
 
@@ -131,6 +167,20 @@ export default function EnterScores() {
     startHole === 1 && endHole === 9 ? 'Front 9'
     : startHole === 10 && endHole === 18 ? 'Back 9'
     : `${endHole - startHole + 1} holes`;
+
+  // small toggle button helper
+  const ToggleBtn = ({ value, onClick, label }) => {
+    const bg = value === true ? 'var(--green-500)' : value === false ? 'var(--flag)' : 'var(--white)';
+    const color = value === null || value === undefined ? 'var(--muted)' : 'var(--white)';
+    const border = value === null || value === undefined ? '1.5px solid var(--line)' : 'none';
+    const text = value === true ? `${label} ✓` : value === false ? `${label} ✗` : label;
+    return (
+      <button
+        onClick={onClick}
+        style={{ width: 'auto', minHeight: 38, fontSize: 12, padding: '0 10px', background: bg, color, border }}
+      >{text}</button>
+    );
+  };
 
   return (
     <div className="content">
@@ -147,6 +197,11 @@ export default function EnterScores() {
             <div className="l">To par</div>
           </div>
         </div>
+        <p className="muted" style={{ marginTop: 8 }}>
+          Putts, fairway, and green are optional — tap to set them, or just log
+          strokes and move on. Fairway/green: tap once for hit (✓), again for
+          miss (✗), again to clear.
+        </p>
       </div>
 
       {savedNote && <div className="success">{savedNote}</div>}
@@ -157,34 +212,58 @@ export default function EnterScores() {
         </div>
       )}
 
-      <div className="card">
-        {holeNumbers.map((hole) => {
-          const holePar = par[hole - 1];
-          const val = strokes[hole] ?? holePar ?? 4;
-          const diff = holePar ? val - holePar : null;
-          const chipClass =
-            diff === null ? 'even' : diff < 0 ? 'under' : diff > 0 ? 'over' : 'even';
-          return (
-            <div key={hole} className="hole-row">
+      {holeNumbers.map((hole) => {
+        const holePar = par[hole - 1];
+        const h = getHole(hole);
+        const val = h.strokes ?? holePar ?? 4;
+        const diff = holePar ? val - holePar : null;
+        const chipClass =
+          diff === null ? 'even' : diff < 0 ? 'under' : diff > 0 ? 'over' : 'even';
+        const isPar3 = holePar === 3;
+        return (
+          <div key={hole} className="card" style={{ padding: 14 }}>
+            <div className="row-between" style={{ marginBottom: 8 }}>
               <div>
-                <div className="hole-num">{hole}</div>
-                <div className="hole-par">Par {holePar ?? '—'}</div>
-              </div>
-              <div className="stepper">
-                <button className="secondary" onClick={() => adjust(hole, -1)}>−</button>
-                <span className="val">{val}</span>
-                <button className="secondary" onClick={() => adjust(hole, +1)}>+</button>
+                <span className="hole-num">Hole {hole}</span>
+                <span className="hole-par"> · Par {holePar ?? '—'}</span>
               </div>
               <div className={`chip ${chipClass}`}>
                 {diff === null ? '—' : formatToPar(diff)}
               </div>
-              <button onClick={() => saveHole(hole)} style={{ padding: 0 }}>
-                Save
-              </button>
             </div>
-          );
-        })}
-      </div>
+
+            {/* strokes */}
+            <div className="row-between" style={{ marginBottom: 8 }}>
+              <span className="muted" style={{ width: 70 }}>Score</span>
+              <div className="stepper">
+                <button className="secondary" onClick={() => adjustStrokes(hole, -1)}>−</button>
+                <span className="val">{val}</span>
+                <button className="secondary" onClick={() => adjustStrokes(hole, +1)}>+</button>
+              </div>
+            </div>
+
+            {/* putts */}
+            <div className="row-between" style={{ marginBottom: 8 }}>
+              <span className="muted" style={{ width: 70 }}>Putts</span>
+              <div className="stepper">
+                <button className="secondary" onClick={() => adjustPutts(hole, -1)}>−</button>
+                <span className="val">{h.putts ?? '—'}</span>
+                <button className="secondary" onClick={() => adjustPutts(hole, +1)}>+</button>
+              </div>
+            </div>
+
+            {/* fairway (not on par 3s) + green */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              {!isPar3 && (
+                <ToggleBtn value={h.fairway} onClick={() => toggle(hole, 'fairway')} label="Fairway" />
+              )}
+              <ToggleBtn value={h.gir} onClick={() => toggle(hole, 'gir')} label="Green" />
+            </div>
+
+            <button onClick={() => saveHole(hole)}>Save hole {hole}</button>
+          </div>
+        );
+      })}
 
       {playerId && (
         <div className="card">
