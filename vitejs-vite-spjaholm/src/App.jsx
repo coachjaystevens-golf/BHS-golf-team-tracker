@@ -1,14 +1,14 @@
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext.jsx';
 import Login from './pages/Login.jsx';
-import JoinTeam from './pages/JoinTeam.jsx';
+import ResetPassword from './pages/ResetPassword.jsx';
 import Rounds from './pages/Rounds.jsx';
 import EnterScores from './pages/EnterScores.jsx';
 import MyStats from './pages/MyStats.jsx';
 import CoachDashboard from './pages/CoachDashboard.jsx';
 
 function Shell() {
-  const { user, loading, isCoach, isLinked, signOut } = useAuth();
+  const { user, profile, loading, isCoach, signOut, recovery } = useAuth();
 
   if (loading) {
     return (
@@ -20,22 +20,22 @@ function Shell() {
     );
   }
 
-  if (!user) {
-    return (
-      <div className="app-shell">
-        <Login />
-      </div>
-    );
-  }
-
-  // logged in, but a player who hasn't claimed a roster spot yet
-  if (!isLinked) {
+  // arriving via a password reset link — show the set-new-password screen
+  if (recovery) {
     return (
       <div className="app-shell">
         <div className="topbar">
           <h1>Golf Team Tracker</h1>
         </div>
-        <JoinTeam />
+        <ResetPassword />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="app-shell">
+        <Login />
       </div>
     );
   }
