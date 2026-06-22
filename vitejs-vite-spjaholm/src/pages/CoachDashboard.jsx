@@ -363,7 +363,7 @@ function Roster() {
   async function load() {
     const { data } = await supabase
       .from('players')
-      .select('id, full_name, gender, grade, user_id, join_code')
+      .select('id, full_name, gender, grade, user_id, join_code, capture_helper')
       .order('gender').order('full_name');
     setPlayers(data ?? []);
   }
@@ -406,15 +406,23 @@ function Roster() {
         <button onClick={addPlayer}>Add to player list</button>
       </div>
 
-      <RosterList title="All players · Boys" players={boys} />
-      <RosterList title="All players · Girls" players={girls} />
+      <RosterList title="All players · Boys" players={boys} onChange={load} />
+      <RosterList title="All players · Girls" players={girls} onChange={load} />
 
       <SeasonRoster allPlayers={players} />
     </>
   );
 }
 
-function RosterList({ title, players }) {
+function RosterList({ title, players, onChange }) {
+  async function toggleHelper(p) {
+    await supabase
+      .from('players')
+      .update({ capture_helper: !p.capture_helper })
+      .eq('id', p.id);
+    if (onChange) onChange();
+  }
+
   return (
     <div className="card">
       <h2>{title} ({players.length})</h2>
@@ -423,7 +431,7 @@ function RosterList({ title, players }) {
       ) : (
         <table>
           <thead>
-            <tr><th>Name</th><th>Code</th><th>Linked?</th></tr>
+            <tr><th>Name</th><th>Code</th><th>Linked?</th><th>Capture</th></tr>
           </thead>
           <tbody>
             {players.map((p) => (
@@ -433,11 +441,28 @@ function RosterList({ title, players }) {
                   {p.user_id ? '—' : (p.join_code ?? '—')}
                 </td>
                 <td>{p.user_id ? 'Yes' : 'Not yet'}</td>
+                <td>
+                  <button
+                    onClick={() => toggleHelper(p)}
+                    style={{
+                      width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px',
+                      background: p.capture_helper ? 'var(--green-500)' : 'var(--white)',
+                      color: p.capture_helper ? 'var(--white)' : 'var(--green-700)',
+                      border: p.capture_helper ? 'none' : '1.5px solid var(--green-500)',
+                    }}
+                  >
+                    {p.capture_helper ? 'Helper ✓' : 'Make helper'}
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+      <p className="muted" style={{ marginTop: 8 }}>
+        "Capture" lets a player help record green locations on the course.
+        Only flag players you trust to map accurately.
+      </p>
     </div>
   );
 }
