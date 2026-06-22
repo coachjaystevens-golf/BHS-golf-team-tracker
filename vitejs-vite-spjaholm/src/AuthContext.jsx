@@ -25,7 +25,7 @@ export function AuthProvider({ children }) {
   async function loadPlayerRow(userId) {
     const { data } = await supabase
       .from('players')
-      .select('id, full_name')
+      .select('id, full_name, capture_helper')
       .eq('user_id', userId)
       .maybeSingle();
     setPlayerRow(data ?? null);
@@ -76,6 +76,7 @@ export function AuthProvider({ children }) {
     loading,
     isCoach,
     isLinked: isCoach || playerRow !== null,
+    isCaptureHelper: isCoach || playerRow?.capture_helper === true,
     refreshLink: () => (user ? loadPlayerRow(user.id) : Promise.resolve()),
     seasons,
     seasonId,
