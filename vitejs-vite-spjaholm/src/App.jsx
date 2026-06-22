@@ -2,13 +2,15 @@ import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext.jsx';
 import Login from './pages/Login.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
+import JoinTeam from './pages/JoinTeam.jsx';
 import Rounds from './pages/Rounds.jsx';
 import EnterScores from './pages/EnterScores.jsx';
 import MyStats from './pages/MyStats.jsx';
 import CoachDashboard from './pages/CoachDashboard.jsx';
+import CaptureCourse from './pages/CaptureCourse.jsx';
 
 function Shell() {
-  const { user, profile, loading, isCoach, signOut, recovery } = useAuth();
+  const { user, loading, isCoach, isLinked, isCaptureHelper, signOut, recovery } = useAuth();
 
   if (loading) {
     return (
@@ -40,6 +42,18 @@ function Shell() {
     );
   }
 
+  // logged in, but a player who hasn't claimed a roster spot yet
+  if (!isLinked) {
+    return (
+      <div className="app-shell">
+        <div className="topbar">
+          <h1>Golf Team Tracker</h1>
+        </div>
+        <JoinTeam />
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <div className="topbar">
@@ -55,12 +69,17 @@ function Shell() {
           path="/coach"
           element={isCoach ? <CoachDashboard /> : <Navigate to="/" />}
         />
+        <Route
+          path="/capture"
+          element={isCaptureHelper ? <CaptureCourse /> : <Navigate to="/" />}
+        />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
 
       <nav className="bottom-nav">
         <NavLink to="/" end>Rounds</NavLink>
         <NavLink to="/stats">My Stats</NavLink>
+        {isCaptureHelper && <NavLink to="/capture">Capture</NavLink>}
         {isCoach && <NavLink to="/coach">Coach</NavLink>}
         <a onClick={signOut} style={{ cursor: 'pointer' }}>Sign out</a>
       </nav>
