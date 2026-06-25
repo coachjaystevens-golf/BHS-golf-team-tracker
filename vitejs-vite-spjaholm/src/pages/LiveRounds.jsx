@@ -22,6 +22,8 @@ export default function LiveRound() {
   const [error, setError] = useState('');
   // view: which stat the grid colors by
   const [view, setView] = useState('putts'); // 'putts' | 'gir' | 'fairway'
+  // which player's round is pending a force-close confirm
+  const [confirmId, setConfirmId] = useState(null);
   // players currently out: [{ player_id, full_name, gender, course, par[], holes:[{hole_number,strokes,putts,fairway_hit,green_in_regulation}] }]
   const [rows, setRows] = useState([]);
 
@@ -76,6 +78,7 @@ export default function LiveRound() {
         const player = playerById[s.player_id];
         byPlayer[s.player_id] = {
           player_id: s.player_id,
+          round_id: s.round_id,
           full_name: player?.full_name ?? 'Unknown player',
           gender: player?.gender ?? null,
           course: rnd?.courses?.name ?? 'Course',
@@ -115,6 +118,18 @@ export default function LiveRound() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [load]);
+
+  // Coach manually closes a stuck round so it drops off the live board.
+  async function forceComplete(roundId) {
+    setError('');
+    const { error: ue } = await supabase
+      .from('rounds')
+      .update({ status: 'complete' })
+      .eq('id', roundId);
+    if (ue) { setError(ue.message); return; }
+    setConfirmId(null);
+    load();
+  }
 
   if (loading) return <div className="content"><p className="muted">Loading live board…</p></div>;
 
@@ -193,6 +208,37 @@ export default function LiveRound() {
             </div>
           ))}
         </div>
+
+        {confirmId === p.player_id ? (
+          <div style={{ marginTop: 8 }}>
+            <p className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+              Mark this round complete? It will drop off the live board.
+            </p>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                style={{ width: 'auto', padding: '0 10px', fontSize: 12, background: 'var(--flag)' }}
+                onClick={() => forceComplete(p.round_id)}
+              >
+                Yes, complete it
+              </button>
+              <button
+                className="secondary"
+                style={{ width: 'auto', padding: '0 10px', fontSize: 12 }}
+                onClick={() => setConfirmId(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            className="secondary"
+            style={{ width: 'auto', padding: '0 10px', fontSize: 12, marginTop: 8, color: 'var(--muted)' }}
+            onClick={() => setConfirmId(p.player_id)}
+          >
+            Force complete
+          </button>
+        )}
       </div>
     );
   };
