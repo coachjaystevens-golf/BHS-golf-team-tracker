@@ -122,6 +122,24 @@ export default function EnterScores() {
     if (error) { setError(error.message); return; }
     setSavedNote(`Hole ${hole} saved`);
     setTimeout(() => setSavedNote(''), 1500);
+
+    // Step 2b: auto-complete the round when every hole in range is saved.
+    const sStart = round.start_hole ?? 1;
+    const sEnd = round.end_hole ?? (round.courses?.holes ?? 18);
+    const savedHoles = new Set([
+      ...Object.keys(holeData).map(Number),
+      hole, // include the hole we just saved (state may not have updated yet)
+    ]);
+    let allIn = true;
+    for (let n = sStart; n <= sEnd; n++) {
+      if (!savedHoles.has(n)) { allIn = false; break; }
+    }
+    if (allIn) {
+      await supabase
+        .from('rounds')
+        .update({ status: 'complete' })
+        .eq('id', roundId);
+    }
   }
 
   async function saveComment() {
