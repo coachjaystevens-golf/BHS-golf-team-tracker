@@ -26,7 +26,7 @@ export default function MyStats() {
       // pull scores joined to their round (incl. hole range) for this season
       const { data: rows, error: e } = await supabase
         .from('scores')
-        .select('strokes, hole_number, putts, fairway_hit, green_in_regulation, rounds!inner ( id, type, season_id, start_hole, end_hole, courses ( par_per_hole ) )')
+        .select('strokes, hole_number, putts, fairway_hit, green_in_regulation, rounds!inner ( id, type, season_id, start_hole, end_hole, played_on, courses ( par_per_hole ) )')
         .eq('player_id', p.id)
         .eq('rounds.season_id', seasonId);
       if (e) { setError(e.message); setLoading(false); return; }
@@ -42,6 +42,7 @@ export default function MyStats() {
             par: rd.courses?.par_per_hole ?? [],
             start: rd.start_hole ?? 1,
             end: rd.end_hole ?? 18,
+            played_on: rd.played_on ?? null,
             scores: [],
           };
         }
@@ -105,11 +106,36 @@ export default function MyStats() {
           ? Math.round((puttsSum / list.length) * 10) / 10
           : null;
 
+        // ---- Improvement: half-vs-half average, chronological ----
+        // Order rounds by date; rounds without a date sort last but still count.
+        const dated = [...list].sort((a, b) => {
+          const da = a.played_on ?? '9999-12-31';
+          const db = b.played_on ?? '9999-12-31';
+          return da < db ? -1 : da > db ? 1 : 0;
+        });
+        let improvement = null;
+        if (dated.length >= 4) {
+          const mid = Math.floor(dated.length / 2);
+          const firstHalf = dated.slice(0, mid);
+          const secondHalf = dated.slice(dated.length - mid); // same size as firstHalf
+          const avgOf = (arr) => {
+            const t = arr.map((r) => roundTotal(r.scores));
+            return scoringAverage(t);
+          };
+          const early = avgOf(firstHalf);
+          const recent = avgOf(secondHalf);
+          if (early != null && recent != null) {
+            const delta = Math.round((early - recent) * 10) / 10; // positive = improved
+            improvement = { early, recent, delta, firstN: firstHalf.length, secondN: secondHalf.length };
+          }
+        }
+
         return {
           rounds: list.length,
           average: scoringAverage(totals),
           bestToPar: best,
           tally,
+          improvement,
           detail: {
             puttsPerRound,
             puttsHoles,
@@ -198,6 +224,48 @@ export default function MyStats() {
               <tr><td>Double bogey +</td><td className="num">{s.tally.double_plus}</td></tr>
             </tbody>
           </table>
+
+          {/* Improvement trend — half vs half, gated at 4 rounds */}
+          <p className="eyebrow" style={{ marginTop: 16 }}>Your trend this season</p>
+          {!s.improvement ? (
+            <p className="muted" style={{ fontSize: 13 }}>
+              Keep playing — your improvement trend shows up once you've got
+              about four {label.toLowerCase()} in. ({s.rounds} so far.)
+            </p>
+          ) : (
+            <div
+              className="stat-box"
+              style={{
+                background: s.improvement.delta > 0 ? 'var(--green-100)' : 'var(--white)',
+                marginBottom: 4,
+              }}
+            >
+              {s.improvement.delta > 0 ? (
+                <>
+                  <div className="n" style={{ color: 'var(--green-700)' }}>
+                    ▼ {s.improvement.delta}
+                  </div>
+                  <div className="l">
+                    strokes better — averaging {s.improvement.recent} lately vs {s.improvement.early} early in the season
+                  </div>
+                </>
+              ) : s.improvement.delta < 0 ? (
+                <>
+                  <div className="n">{Math.abs(s.improvement.delta)} up</div>
+                  <div className="l">
+                    averaging {s.improvement.recent} lately vs {s.improvement.early} earlier — keep at it, scores bounce around
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="n">Steady</div>
+                  <div className="l">
+                    holding around {s.improvement.recent} — consistency is its own win
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Putting & accuracy — only shown if any of it was recorded */}
           {(s.detail.puttsHoles > 0 || s.detail.fairwayChances > 0 || s.detail.girHoles > 0) && (
