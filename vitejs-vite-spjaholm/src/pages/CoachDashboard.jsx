@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase.js';
-import { roundTotal, teamScore, formatToPar, toPar } from '../lib/scoring.js';
+import { roundTotal, teamScore, formatToPar, toPar, scoringAverage } from '../lib/scoring.js';
 import { useAuth } from '../AuthContext.jsx';
 
 export default function CoachDashboard() {
@@ -13,6 +13,7 @@ export default function CoachDashboard() {
       <div className="card">
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
           <button className={tab === 'team' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('team')}>Scores</button>
+          <button className={tab === 'board' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('board')}>Board</button>
           <button className={tab === 'roster' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('roster')}>Roster</button>
           <button className={tab === 'courses' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('courses')}>Courses</button>
           <button className={tab === 'seasons' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('seasons')}>Seasons</button>
@@ -21,6 +22,7 @@ export default function CoachDashboard() {
       </div>
 
       {tab === 'team' && <TeamScores />}
+      {tab === 'board' && <Leaderboard />}
       {tab === 'roster' && <Roster />}
       {tab === 'courses' && <Courses />}
       {tab === 'seasons' && <Seasons />}
@@ -1144,6 +1146,193 @@ function Analysis() {
             </div>
           );
         })}
+      </div>
+    </>
+  );
+}
+
+// ---- Leaderboard: season standings, ranked, boys & girls separate ----
+function Leaderboard() {
+  const { seasons, seasonId, setSeasonId, selectedSeason } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState('');
+  const [sortKey, setSortKey] = useState('average'); // average | putts | pars | best
+
+  async function load() {
+    if (!seasonId) { setRows(null); return; }
+    setLoading(true);
+    setError('');
+
+    // every score this season, with player + round range + course par
+    const { data: scoreRows, error: e } = await supabase
+      .from('scores')
+      .select('strokes, hole_number, putts, players ( id, full_name, gender ), rounds!inner ( id, season_id, start_hole, end_hole, courses ( par_per_hole ) )')
+      .eq('rounds.season_id', seasonId);
+    if (e) { setError(e.message); setLoading(false); return; }
+
+    // group scores by player, then by round
+    const players = {}; // pid -> { name, gender, rounds: { rid: { par, scores:[], putts:[] } } }
+    for (const r of scoreRows ?? []) {
+      const pid = r.players?.id;
+      const rid = r.rounds?.id;
+      if (!pid || !rid) continue;
+      if (!players[pid]) {
+        players[pid] = { name: r.players.full_name, gender: r.players.gender, rounds: {} };
+      }
+      if (!players[pid].rounds[rid]) {
+        players[pid].rounds[rid] = {
+          par: r.rounds?.courses?.par_per_hole ?? [],
+          scores: [],
+          puttsSum: 0, puttsHoles: 0,
+        };
+      }
+      const R = players[pid].rounds[rid];
+      R.scores.push({ hole_number: r.hole_number, strokes: r.strokes });
+      if (r.putts != null) { R.puttsSum += r.putts; R.puttsHoles += 1; }
+    }
+
+    // compute per-player season aggregates
+    const list = Object.values(players).map((p) => {
+      const roundList = Object.values(p.rounds);
+      const totals = [];
+      let bestToPar = null;
+      let parsOrBetter = 0;
+      let puttsSum = 0, puttsRounds = 0;
+
+      for (const R of roundList) {
+        const total = roundTotal(R.scores);
+        totals.push(total);
+        const tp = toPar(R.scores, R.par);
+        if (bestToPar === null || tp < bestToPar) bestToPar = tp;
+        // pars or better: holes where strokes <= par
+        for (const s of R.scores) {
+          const hp = R.par[s.hole_number - 1];
+          if (hp && s.strokes <= hp) parsOrBetter += 1;
+        }
+        // putts per round only counts rounds where putts were logged
+        if (R.puttsHoles > 0) { puttsSum += R.puttsSum; puttsRounds += 1; }
+      }
+
+      return {
+        name: p.name,
+        gender: p.gender,
+        rounds: roundList.length,
+        average: scoringAverage(totals),
+        bestToPar,
+        parsOrBetter,
+        puttsPerRound: puttsRounds > 0 ? Math.round((puttsSum / puttsRounds) * 10) / 10 : null,
+      };
+    });
+
+    setRows(list);
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, [seasonId]);
+
+  const seasonSwitcher = seasons.length > 0 && (
+    <div className="card">
+      <label>Season</label>
+      <select value={seasonId} onChange={(e) => setSeasonId(e.target.value)}>
+        {seasons.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}{s.is_active ? ' (current)' : ''}
+          </option>
+        ))}
+      </select>
+      <div className="spacer" />
+      <button className="secondary" onClick={load}>↻ Refresh</button>
+    </div>
+  );
+
+  if (loading) return <>{seasonSwitcher}<p className="muted">Building the board…</p></>;
+  if (error) return <>{seasonSwitcher}<div className="error">{error}</div></>;
+
+  if (!rows || rows.length === 0) {
+    return (
+      <>
+        {seasonSwitcher}
+        <div className="card">
+          <h2>Leaderboard</h2>
+          <p className="muted">No scores in {selectedSeason?.name ?? 'this season'} yet. Standings appear once rounds are recorded.</p>
+        </div>
+      </>
+    );
+  }
+
+  // sort comparators: lower is better for average/putts/best; higher better for pars
+  const sortFns = {
+    average: (a, b) => (a.average ?? 999) - (b.average ?? 999),
+    putts:   (a, b) => (a.puttsPerRound ?? 999) - (b.puttsPerRound ?? 999),
+    pars:    (a, b) => b.parsOrBetter - a.parsOrBetter,
+    best:    (a, b) => (a.bestToPar ?? 999) - (b.bestToPar ?? 999),
+  };
+
+  const Header = ({ label, k }) => (
+    <th
+      className="num"
+      style={{ cursor: 'pointer', textDecoration: sortKey === k ? 'underline' : 'none' }}
+      onClick={() => setSortKey(k)}
+    >
+      {label}{sortKey === k ? ' ▾' : ''}
+    </th>
+  );
+
+  const Board = ({ title, players }) => {
+    if (players.length === 0) return null;
+    const sorted = [...players].sort(sortFns[sortKey]);
+    return (
+      <div className="card">
+        <h2>{title}</h2>
+        <p className="muted" style={{ marginBottom: 8 }}>
+          Tap a column to rank by it. Lower is better for average, putts, and best round.
+        </p>
+        <div style={{ overflowX: 'auto' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Player</th>
+                <Header label="Avg" k="average" />
+                <Header label="Putts/rd" k="putts" />
+                <Header label="Pars+" k="pars" />
+                <Header label="Best" k="best" />
+                <th className="num">Rds</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((p, i) => (
+                <tr key={p.name}>
+                  <td className="num">{i + 1}</td>
+                  <td>{p.name}</td>
+                  <td className="num">{p.average ?? '—'}</td>
+                  <td className="num">{p.puttsPerRound ?? '—'}</td>
+                  <td className="num">{p.parsOrBetter}</td>
+                  <td className="num">{p.bestToPar === null ? '—' : formatToPar(p.bestToPar)}</td>
+                  <td className="num">{p.rounds}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const boys = rows.filter((p) => p.gender === 'boys');
+  const girls = rows.filter((p) => p.gender === 'girls');
+
+  return (
+    <>
+      {seasonSwitcher}
+      <Board title="Boys" players={boys} />
+      <Board title="Girls" players={girls} />
+      <div className="card">
+        <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+          Putts/round counts only rounds where putts were logged, so it may
+          cover fewer rounds than a player's scoring average.
+        </p>
       </div>
     </>
   );
