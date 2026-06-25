@@ -123,18 +123,22 @@ export default function EnterScores() {
     setSavedNote(`Hole ${hole} saved`);
     setTimeout(() => setSavedNote(''), 1500);
 
-    // Step 2b: auto-complete the round when every hole in range is saved.
+    // Step 2b (fixed): auto-complete only when the DATABASE confirms every
+    // hole in range is saved. We count distinct saved holes server-side
+    // rather than trusting React state, which can be stale or partial.
     const sStart = round.start_hole ?? 1;
     const sEnd = round.end_hole ?? (round.courses?.holes ?? 18);
-    const savedHoles = new Set([
-      ...Object.keys(holeData).map(Number),
-      hole, // include the hole we just saved (state may not have updated yet)
-    ]);
-    let allIn = true;
-    for (let n = sStart; n <= sEnd; n++) {
-      if (!savedHoles.has(n)) { allIn = false; break; }
-    }
-    if (allIn) {
+    const holesInRange = sEnd - sStart + 1;
+    const { data: savedRows, error: ce } = await supabase
+      .from('scores')
+      .select('hole_number')
+      .eq('round_id', roundId)
+      .eq('player_id', playerId)
+      .gte('hole_number', sStart)
+      .lte('hole_number', sEnd);
+    if (ce) { setError(ce.message); return; }
+    const distinctHoles = new Set((savedRows ?? []).map((r) => r.hole_number));
+    if (distinctHoles.size >= holesInRange) {
       await supabase
         .from('rounds')
         .update({ status: 'complete' })
