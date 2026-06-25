@@ -21,6 +21,7 @@ export default function EnterScores() {
   const [commentSaved, setCommentSaved] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [coachNote, setCoachNote] = useState(null); // { id, body, acknowledged }
 
   useEffect(() => {
     (async () => {
@@ -65,9 +66,27 @@ export default function EnterScores() {
           .maybeSingle();
         if (cmt) setComment(cmt.body);
       }
+
+      // coach's pre-round note for this round (not player-specific)
+      const { data: note } = await supabase
+        .from('round_notes')
+        .select('id, body, acknowledged')
+        .eq('round_id', roundId)
+        .maybeSingle();
+      if (note) setCoachNote(note);
+
       setLoading(false);
     })();
   }, [roundId, user.id]);
+
+  async function acknowledgeNote() {
+    if (!coachNote) return;
+    const { error } = await supabase
+      .from('round_notes')
+      .update({ acknowledged: true })
+      .eq('id', coachNote.id);
+    if (!error) setCoachNote({ ...coachNote, acknowledged: true });
+  }
 
   function getHole(hole) {
     return holeData[hole] ?? { strokes: par[hole - 1] ?? 4, putts: null, fairway: null, gir: null };
@@ -225,6 +244,29 @@ export default function EnterScores() {
           miss (✗), again to clear.
         </p>
       </div>
+
+      {coachNote && (
+        <div
+          className="card"
+          style={{
+            background: 'var(--green-100)',
+            border: '2px solid var(--green-500)',
+          }}
+        >
+          <p className="eyebrow" style={{ marginBottom: 4 }}>📋 Note from your coach</p>
+          <p style={{ fontSize: 15, marginBottom: 8 }}>{coachNote.body}</p>
+          {coachNote.acknowledged ? (
+            <p className="muted" style={{ fontSize: 13, margin: 0 }}>✓ Got it</p>
+          ) : (
+            <button
+              style={{ width: 'auto', padding: '0 14px', minHeight: 38, fontSize: 13 }}
+              onClick={acknowledgeNote}
+            >
+              Got it
+            </button>
+          )}
+        </div>
+      )}
 
       {savedNote && <div className="success">{savedNote}</div>}
       {!playerId && (
