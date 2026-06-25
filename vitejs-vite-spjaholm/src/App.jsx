@@ -8,10 +8,9 @@ import EnterScores from './pages/EnterScores.jsx';
 import MyStats from './pages/MyStats.jsx';
 import CoachDashboard from './pages/CoachDashboard.jsx';
 import CaptureCourse from './pages/CaptureCourse.jsx';
-
+import LiveRound from './pages/LiveRound.jsx';
 function Shell() {
   const { user, loading, isCoach, isLinked, isCaptureHelper, signOut, recovery } = useAuth();
-
   if (loading) {
     return (
       <div className="app-shell">
@@ -21,7 +20,6 @@ function Shell() {
       </div>
     );
   }
-
   // arriving via a password reset link — show the set-new-password screen
   if (recovery) {
     return (
@@ -33,7 +31,6 @@ function Shell() {
       </div>
     );
   }
-
   if (!user) {
     return (
       <div className="app-shell">
@@ -41,7 +38,6 @@ function Shell() {
       </div>
     );
   }
-
   // logged in, but a player who hasn't claimed a roster spot yet
   if (!isLinked) {
     return (
@@ -53,14 +49,12 @@ function Shell() {
       </div>
     );
   }
-
   return (
     <div className="app-shell">
       <div className="topbar">
         <h1>Golf Team Tracker</h1>
         <span className="role-tag">{isCoach ? 'Coach' : 'Player'}</span>
       </div>
-
       <Routes>
         <Route path="/" element={<Rounds />} />
         <Route path="/round/:roundId" element={<EnterScores />} />
@@ -70,23 +64,26 @@ function Shell() {
           element={isCoach ? <CoachDashboard /> : <Navigate to="/" />}
         />
         <Route
+          path="/live"
+          element={isCoach ? <LiveRound /> : <Navigate to="/" />}
+        />
+        <Route
           path="/capture"
           element={isCaptureHelper ? <CaptureCourse /> : <Navigate to="/" />}
         />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
-
       <nav className="bottom-nav">
         <NavLink to="/" end>Rounds</NavLink>
         <NavLink to="/stats">My Stats</NavLink>
         {isCaptureHelper && <NavLink to="/capture">Capture</NavLink>}
+        {isCoach && <NavLink to="/live">Live</NavLink>}
         {isCoach && <NavLink to="/coach">Coach</NavLink>}
         <a onClick={signOut} style={{ cursor: 'pointer' }}>Sign out</a>
       </nav>
     </div>
   );
 }
-
 export default function App() {
   return (
     <AuthProvider>
