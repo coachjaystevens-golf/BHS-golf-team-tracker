@@ -26,7 +26,7 @@ export default function MyStats() {
       // pull scores joined to their round (incl. hole range) for this season
       const { data: rows, error: e } = await supabase
         .from('scores')
-        .select('strokes, hole_number, rounds!inner ( id, type, season_id, start_hole, end_hole, courses ( par_per_hole ) )')
+        .select('strokes, hole_number, putts, fairway_hit, green_in_regulation, rounds!inner ( id, type, season_id, start_hole, end_hole, courses ( par_per_hole ) )')
         .eq('player_id', p.id)
         .eq('rounds.season_id', seasonId);
       if (e) { setError(e.message); setLoading(false); return; }
@@ -45,7 +45,13 @@ export default function MyStats() {
             scores: [],
           };
         }
-        byRound[rid].scores.push({ hole_number: row.hole_number, strokes: row.strokes });
+        byRound[rid].scores.push({
+          hole_number: row.hole_number,
+          strokes: row.strokes,
+          putts: row.putts,
+          fairway_hit: row.fairway_hit,
+          green_in_regulation: row.green_in_regulation,
+        });
       }
 
       // classify each round as 9-hole or 18-hole by its range
@@ -61,17 +67,58 @@ export default function MyStats() {
         const totals = list.map((r) => roundTotal(r.scores));
         const tally = { eagle: 0, birdie: 0, par: 0, bogey: 0, double_plus: 0 };
         let best = null;
+
+        // detail-stat accumulators
+        let puttsSum = 0, puttsHoles = 0, threePutts = 0;
+        let fairwayHits = 0, fairwayChances = 0;
+        let girHits = 0, girHoles = 0;
+
         for (const r of list) {
           const t = tallyResults(r.scores, r.par);
           for (const k in tally) tally[k] += t[k];
           const tp = toPar(r.scores, r.par);
           if (best === null || tp < best) best = tp;
+
+          for (const s of r.scores) {
+            const holePar = r.par[s.hole_number - 1];
+            // putts: count any hole where putts were recorded
+            if (s.putts != null) {
+              puttsSum += s.putts;
+              puttsHoles += 1;
+              if (s.putts >= 3) threePutts += 1;
+            }
+            // fairways: only par 4s and 5s count as a chance
+            if (s.fairway_hit != null && holePar && holePar > 3) {
+              fairwayChances += 1;
+              if (s.fairway_hit === true) fairwayHits += 1;
+            }
+            // greens: every hole with a recorded value counts
+            if (s.green_in_regulation != null) {
+              girHoles += 1;
+              if (s.green_in_regulation === true) girHits += 1;
+            }
+          }
         }
+
+        const pct = (hit, total) => (total > 0 ? Math.round((hit / total) * 100) : null);
+        const puttsPerRound = puttsHoles > 0
+          ? Math.round((puttsSum / list.length) * 10) / 10
+          : null;
+
         return {
           rounds: list.length,
           average: scoringAverage(totals),
           bestToPar: best,
           tally,
+          detail: {
+            puttsPerRound,
+            puttsHoles,
+            threePutts,
+            fairwayPct: pct(fairwayHits, fairwayChances),
+            fairwayHits, fairwayChances,
+            girPct: pct(girHits, girHoles),
+            girHits, girHoles,
+          },
         };
       };
 
@@ -141,6 +188,7 @@ export default function MyStats() {
               <div className="l">Birdies or better</div>
             </div>
           </div>
+
           <table style={{ marginTop: 12 }}>
             <tbody>
               <tr><td>Eagles or better</td><td className="num">{s.tally.eagle}</td></tr>
@@ -150,6 +198,35 @@ export default function MyStats() {
               <tr><td>Double bogey +</td><td className="num">{s.tally.double_plus}</td></tr>
             </tbody>
           </table>
+
+          {/* Putting & accuracy — only shown if any of it was recorded */}
+          {(s.detail.puttsHoles > 0 || s.detail.fairwayChances > 0 || s.detail.girHoles > 0) && (
+            <>
+              <p className="eyebrow" style={{ marginTop: 16 }}>Putting &amp; accuracy</p>
+              <div className="stat-grid">
+                <div className="stat-box">
+                  <div className="n">{s.detail.puttsPerRound ?? '—'}</div>
+                  <div className="l">Putts / round</div>
+                </div>
+                <div className="stat-box">
+                  <div className="n">{s.detail.girPct == null ? '—' : `${s.detail.girPct}%`}</div>
+                  <div className="l">Greens in reg</div>
+                </div>
+                <div className="stat-box">
+                  <div className="n">{s.detail.fairwayPct == null ? '—' : `${s.detail.fairwayPct}%`}</div>
+                  <div className="l">Fairways hit</div>
+                </div>
+                <div className="stat-box">
+                  <div className="n">{s.detail.puttsHoles > 0 ? s.detail.threePutts : '—'}</div>
+                  <div className="l">3-putts</div>
+                </div>
+              </div>
+              <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+                Based on holes where you logged putts, fairways, and greens —
+                fairway % counts par 4s and 5s only.
+              </p>
+            </>
+          )}
         </>
       )}
     </div>
