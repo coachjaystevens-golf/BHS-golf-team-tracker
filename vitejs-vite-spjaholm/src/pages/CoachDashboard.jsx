@@ -4,24 +4,35 @@ import { roundTotal, teamScore, formatToPar, toPar, scoringAverage } from '../li
 import { useAuth } from '../AuthContext.jsx';
 
 export default function CoachDashboard() {
-  const [tab, setTab] = useState('team');
+  const [tab, setTab] = useState('home');
 
   const tabStyle = { fontSize: 13, padding: '0 6px' };
+
+  // primary tabs always visible; setup tabs live under "Manage"
+  const [showManage, setShowManage] = useState(false);
 
   return (
     <div className="content">
       <div className="card">
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-          <button className={tab === 'team' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('team')}>Scores</button>
-          <button className={tab === 'board' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('board')}>Board</button>
-          <button className={tab === 'goals' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('goals')}>Goals</button>
-          <button className={tab === 'roster' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('roster')}>Roster</button>
-          <button className={tab === 'courses' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('courses')}>Courses</button>
-          <button className={tab === 'seasons' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('seasons')}>Seasons</button>
-          <button className={tab === 'analysis' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('analysis')}>Analysis</button>
+          <button className={tab === 'home' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => { setTab('home'); setShowManage(false); }}>Home</button>
+          <button className={tab === 'team' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => { setTab('team'); setShowManage(false); }}>Scores</button>
+          <button className={tab === 'board' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => { setTab('board'); setShowManage(false); }}>Board</button>
+          <button className={tab === 'goals' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => { setTab('goals'); setShowManage(false); }}>Goals</button>
+          <button className={tab === 'roster' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => { setTab('roster'); setShowManage(false); }}>Roster</button>
+          <button className={showManage ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setShowManage((v) => !v)}>Manage ▾</button>
         </div>
+
+        {showManage && (
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
+            <button className={tab === 'courses' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('courses')}>Courses</button>
+            <button className={tab === 'seasons' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('seasons')}>Seasons</button>
+            <button className={tab === 'analysis' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('analysis')}>Analysis</button>
+          </div>
+        )}
       </div>
 
+      {tab === 'home' && <Home onNavigate={(t) => { setTab(t); setShowManage(false); }} />}
       {tab === 'team' && <TeamScores />}
       {tab === 'board' && <Leaderboard />}
       {tab === 'goals' && <CoachGoals />}
@@ -32,6 +43,134 @@ export default function CoachDashboard() {
     </div>
   );
 }
+
+// ---- Home: landing view with "who's out now" + quick navigation ----
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function Home({ onNavigate }) {
+  const [outNow, setOutNow] = useState([]);
+  const [loadingOut, setLoadingOut] = useState(true);
+
+  async function loadOut() {
+    setLoadingOut(true);
+    // today's in-progress rounds
+    const { data: liveRounds } = await supabase
+      .from('rounds')
+      .select('id, courses ( name )')
+      .eq('status', 'in_progress')
+      .eq('played_on', todayStr());
+
+    if (!liveRounds || liveRounds.length === 0) { setOutNow([]); setLoadingOut(false); return; }
+
+    const roundIds = liveRounds.map((r) => r.id);
+    const courseByRound = {};
+    liveRounds.forEach((r) => { courseByRound[r.id] = r.courses?.name ?? 'Course'; });
+
+    // scores under those rounds, to find who's out and how far along
+    const { data: scores } = await supabase
+      .from('scores')
+      .select('round_id, player_id, hole_number')
+      .in('round_id', roundIds);
+
+    if (!scores || scores.length === 0) { setOutNow([]); setLoadingOut(false); return; }
+
+    const playerIds = [...new Set(scores.map((s) => s.player_id))];
+    const { data: players } = await supabase
+      .from('players')
+      .select('id, full_name')
+      .in('id', playerIds);
+    const nameById = {};
+    (players ?? []).forEach((p) => { nameById[p.id] = p.full_name; });
+
+    // group: one entry per player, with their course and hole count
+    const byPlayer = {};
+    scores.forEach((s) => {
+      if (!byPlayer[s.player_id]) {
+        byPlayer[s.player_id] = {
+          player_id: s.player_id,
+          name: nameById[s.player_id] ?? 'Player',
+          course: courseByRound[s.round_id] ?? 'Course',
+          holes: new Set(),
+        };
+      }
+      byPlayer[s.player_id].holes.add(s.hole_number);
+    });
+
+    const list = Object.values(byPlayer).map((p) => ({
+      player_id: p.player_id,
+      name: p.name,
+      course: p.course,
+      thru: p.holes.size,
+    }));
+    list.sort((a, b) => a.name.localeCompare(b.name));
+    setOutNow(list);
+    setLoadingOut(false);
+  }
+
+  useEffect(() => { loadOut(); }, []);
+
+  const NavCard = ({ title, sub, onClick }) => (
+    <div
+      className="card"
+      style={{ padding: 14, cursor: 'pointer', flex: '1 1 44%' }}
+      onClick={onClick}
+    >
+      <strong>{title}</strong>
+      <div className="muted" style={{ fontSize: 13 }}>{sub}</div>
+    </div>
+  );
+
+  return (
+    <>
+      {/* who's out now */}
+      {!loadingOut && outNow.length > 0 && (
+        <div className="card" style={{ background: 'var(--green-100)', border: '2px solid var(--green-500)' }}>
+          <p className="eyebrow" style={{ marginBottom: 6 }}>
+            ⛳ Out on the course now ({outNow.length})
+          </p>
+          {outNow.map((p) => (
+            <div
+              key={p.player_id}
+              className="row-between"
+              style={{ padding: '8px 0', borderBottom: '1px solid var(--line)', cursor: 'pointer' }}
+              onClick={() => onNavigate('team')}
+            >
+              <div>
+                <strong>{p.name}</strong>
+                <div className="muted" style={{ fontSize: 13 }}>{p.course} · thru {p.thru}</div>
+              </div>
+              <span className="muted">→</span>
+            </div>
+          ))}
+          <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+            Tap a player to see scores. For the full live board, use the Live tab.
+          </p>
+        </div>
+      )}
+
+      {!loadingOut && outNow.length === 0 && (
+        <div className="card">
+          <p className="muted" style={{ margin: 0 }}>
+            No players out on the course right now. When someone's mid-round today,
+            they'll show up here.
+          </p>
+        </div>
+      )}
+
+      {/* quick navigation */}
+      <p className="eyebrow">Jump to</p>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <NavCard title="Scores" sub="Round results & team totals" onClick={() => onNavigate('team')} />
+        <NavCard title="Board" sub="Season standings" onClick={() => onNavigate('board')} />
+        <NavCard title="Goals" sub="Practice targets" onClick={() => onNavigate('goals')} />
+        <NavCard title="Roster" sub="Players & join codes" onClick={() => onNavigate('roster')} />
+      </div>
+    </>
+  );
+}
+
 
 function TeamScores() {
   const { seasons, seasonId, setSeasonId } = useAuth();
