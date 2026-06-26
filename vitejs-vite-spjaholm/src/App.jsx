@@ -10,6 +10,7 @@ import CoachDashboard from './pages/CoachDashboard.jsx';
 import CaptureCourse from './pages/CaptureCourse.jsx';
 import LiveRound from './pages/LiveRound.jsx';
 import Caddie from './pages/Caddie.jsx';
+import AddCourse from './pages/AddCourse.jsx';
 function Shell() {
   const { user, loading, isCoach, isLinked, isCaptureHelper, signOut, recovery } = useAuth();
   if (loading) {
@@ -61,6 +62,7 @@ function Shell() {
         <Route path="/round/:roundId" element={<EnterScores />} />
         <Route path="/stats" element={<MyStats />} />
         <Route path="/caddie" element={<Caddie />} />
+        <Route path="/add-course" element={<AddCourse />} />
         <Route
           path="/coach"
           element={isCoach ? <CoachDashboard /> : <Navigate to="/" />}
@@ -79,6 +81,7 @@ function Shell() {
         <NavLink to="/" end>Rounds</NavLink>
         <NavLink to="/stats">My Stats</NavLink>
         <NavLink to="/caddie">Caddie</NavLink>
+        <NavLink to="/add-course">+ Course</NavLink>
         {isCaptureHelper && <NavLink to="/capture">Capture</NavLink>}
         {isCoach && <NavLink to="/live">Live</NavLink>}
         {isCoach && <NavLink to="/coach">Coach</NavLink>}
