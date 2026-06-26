@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../AuthContext.jsx';
 import { toPar, formatToPar, roundTotal } from '../lib/scoring.js';
-import { enqueueScore, flushQueue, onReconnect, pendingCount, isOnline } from '../lib/offlineQueue.js';
+import { enqueueScore, flushQueue, onReconnect, pendingCount, isOnline, trySaveScore } from '../lib/offlineQueue.js';
 
 export default function EnterScores() {
   const { roundId } = useParams();
@@ -163,20 +163,19 @@ export default function EnterScores() {
       return;
     }
 
-    const { error } = await supabase
-      .from('scores')
-      .upsert(row, { onConflict: 'round_id,player_id,hole_number' });
+    // Try the network save with a hard timeout, so a dead connection
+    // fails fast and queues rather than hanging silently.
+    const result = await trySaveScore(row);
 
-    if (error) {
-      // Save failed (likely connectivity). Queue it rather than lose it.
+    if (!result.ok) {
+      // Save failed or timed out (likely connectivity). Queue it.
       const queued = enqueueScore(row);
       if (queued) {
         setPending(pendingCount());
         setSavedNote(`Hole ${hole} saved offline — will sync`);
         setTimeout(() => setSavedNote(''), 2000);
       } else {
-        // Queue itself failed — surface the original error honestly.
-        setError(error.message);
+        setError(result.error?.message || 'Could not save. Try again.');
       }
       return;
     }
