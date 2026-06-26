@@ -14,6 +14,7 @@ export default function CoachDashboard() {
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
           <button className={tab === 'team' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('team')}>Scores</button>
           <button className={tab === 'board' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('board')}>Board</button>
+          <button className={tab === 'goals' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('goals')}>Goals</button>
           <button className={tab === 'roster' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('roster')}>Roster</button>
           <button className={tab === 'courses' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('courses')}>Courses</button>
           <button className={tab === 'seasons' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('seasons')}>Seasons</button>
@@ -23,6 +24,7 @@ export default function CoachDashboard() {
 
       {tab === 'team' && <TeamScores />}
       {tab === 'board' && <Leaderboard />}
+      {tab === 'goals' && <CoachGoals />}
       {tab === 'roster' && <Roster />}
       {tab === 'courses' && <Courses />}
       {tab === 'seasons' && <Seasons />}
@@ -1435,6 +1437,161 @@ function Leaderboard() {
           Putts/round counts only rounds where putts were logged, so it may
           cover fewer rounds than a player's scoring average.
         </p>
+      </div>
+    </>
+  );
+}
+
+// ---- CoachGoals: view all players' goals, add goals for any player ----
+function CoachGoals() {
+  const [players, setPlayers] = useState([]);
+  const [goalsByPlayer, setGoalsByPlayer] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  // new-goal form state, keyed by player id
+  const [draftFor, setDraftFor] = useState(null);
+  const [desc, setDesc] = useState('');
+  const [target, setTarget] = useState('');
+
+  async function load() {
+    setLoading(true);
+    const { data: pl } = await supabase
+      .from('players')
+      .select('id, full_name, gender')
+      .order('gender').order('full_name');
+    setPlayers(pl ?? []);
+
+    const { data: goals } = await supabase
+      .from('practice_goals')
+      .select('id, player_id, description, target_value, created_by, completed, created_at')
+      .order('completed')
+      .order('created_at', { ascending: false });
+
+    const byPlayer = {};
+    for (const g of goals ?? []) {
+      if (!byPlayer[g.player_id]) byPlayer[g.player_id] = [];
+      byPlayer[g.player_id].push(g);
+    }
+    setGoalsByPlayer(byPlayer);
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+
+  async function addGoal(playerId) {
+    setError('');
+    if (!desc.trim()) return;
+    const { error } = await supabase.from('practice_goals').insert({
+      player_id: playerId,
+      description: desc.trim(),
+      target_value: target.trim() === '' ? null : Number(target),
+      created_by: 'coach',
+      completed: false,
+    });
+    if (error) { setError(error.message); return; }
+    setDesc(''); setTarget(''); setDraftFor(null);
+    load();
+  }
+
+  async function toggleComplete(g) {
+    const { error } = await supabase
+      .from('practice_goals')
+      .update({ completed: !g.completed, updated_at: new Date().toISOString() })
+      .eq('id', g.id);
+    if (!error) load();
+  }
+
+  async function removeGoal(g) {
+    const { error } = await supabase.from('practice_goals').delete().eq('id', g.id);
+    if (!error) load();
+  }
+
+  if (loading) return <p className="muted">Loading goals…</p>;
+
+  const boys = players.filter((p) => p.gender === 'boys');
+  const girls = players.filter((p) => p.gender === 'girls');
+
+  const PlayerGoals = ({ p }) => {
+    const goals = goalsByPlayer[p.id] ?? [];
+    const active = goals.filter((g) => !g.completed);
+    const done = goals.filter((g) => g.completed);
+    const isDrafting = draftFor === p.id;
+    return (
+      <div style={{ paddingBottom: 14, borderBottom: '1px solid var(--line)', marginBottom: 14 }}>
+        <div className="row-between">
+          <strong>{p.full_name}</strong>
+          {!isDrafting && (
+            <button
+              className="secondary"
+              style={{ width: 'auto', minHeight: 34, fontSize: 12, padding: '0 10px' }}
+              onClick={() => { setDraftFor(p.id); setDesc(''); setTarget(''); }}
+            >+ Goal</button>
+          )}
+        </div>
+
+        {isDrafting && (
+          <div style={{ marginTop: 8 }}>
+            <input
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              placeholder="e.g. Work on bunker play"
+            />
+            <input
+              type="number"
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              placeholder="Target number (optional)"
+            />
+            <div className="spacer" />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button style={{ width: 'auto', padding: '0 12px' }} onClick={() => addGoal(p.id)} disabled={!desc.trim()}>Save</button>
+              <button className="secondary" style={{ width: 'auto', padding: '0 12px' }} onClick={() => setDraftFor(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {goals.length === 0 && !isDrafting && (
+          <p className="muted" style={{ fontSize: 13, marginTop: 4 }}>No goals yet.</p>
+        )}
+
+        {active.map((g) => (
+          <div key={g.id} className="row-between" style={{ padding: '6px 0' }}>
+            <div style={{ fontSize: 14 }}>
+              {g.description}
+              {g.target_value != null && <span className="muted"> · target {g.target_value}</span>}
+              {g.created_by === 'player' && <span className="chip even" style={{ marginLeft: 6 }}>player set</span>}
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button style={{ width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px' }} onClick={() => toggleComplete(g)}>Done</button>
+              <button className="secondary" style={{ width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px', color: 'var(--flag)', borderColor: 'var(--flag)' }} onClick={() => removeGoal(g)}>✕</button>
+            </div>
+          </div>
+        ))}
+
+        {done.map((g) => (
+          <div key={g.id} className="row-between" style={{ padding: '6px 0', opacity: 0.6 }}>
+            <div style={{ fontSize: 14, textDecoration: 'line-through' }}>
+              {g.description}
+              {g.target_value != null && <span className="muted"> · target {g.target_value}</span>}
+            </div>
+            <button className="secondary" style={{ width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px' }} onClick={() => toggleComplete(g)}>Undo</button>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <>
+      {error && <div className="error">{error}</div>}
+      <div className="card">
+        <h2>Boys — goals</h2>
+        {boys.length === 0 ? <p className="muted">No boys on the roster.</p>
+          : boys.map((p) => <PlayerGoals key={p.id} p={p} />)}
+      </div>
+      <div className="card">
+        <h2>Girls — goals</h2>
+        {girls.length === 0 ? <p className="muted">No girls on the roster.</p>
+          : girls.map((p) => <PlayerGoals key={p.id} p={p} />)}
       </div>
     </>
   );
