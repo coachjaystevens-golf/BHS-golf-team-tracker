@@ -106,3 +106,25 @@ export function isOnline() {
     return true;
   }
 }
+
+// Attempt a single score upsert with a hard timeout, so a dead
+// connection fails fast instead of hanging forever. Returns
+// { ok: true } on success, or { ok: false, error } on failure
+// or timeout — callers then queue the score.
+export async function trySaveScore(row, timeoutMs = 6000) {
+  try {
+    const savePromise = supabase
+      .from('scores')
+      .upsert(row, { onConflict: 'round_id,player_id,hole_number' });
+
+    const timeout = new Promise((resolve) =>
+      setTimeout(() => resolve({ error: { message: '__timeout__' } }), timeoutMs)
+    );
+
+    const result = await Promise.race([savePromise, timeout]);
+    if (result?.error) return { ok: false, error: result.error };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e };
+  }
+}
