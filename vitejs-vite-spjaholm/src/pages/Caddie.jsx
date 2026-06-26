@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 
 // Great-circle distance between two lat/lng points, returned in YARDS.
@@ -16,6 +17,7 @@ function yardsBetween(lat1, lng1, lat2, lng2) {
 }
 
 export default function Caddie() {
+  const navigate = useNavigate();
   const [courses, setCourses] = useState([]);
   const [courseId, setCourseId] = useState('');
   const [coords, setCoords] = useState({}); // hole_number -> {front_lat,...,center_lat,...}
@@ -88,6 +90,10 @@ export default function Caddie() {
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
+        <div className="spacer" />
+        <button className="secondary" onClick={() => navigate('/my-clubs')}>
+          ⛳ Set up my clubs
+        </button>
       </div>
 
       {/* GPS status */}
