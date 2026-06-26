@@ -59,7 +59,8 @@ function Shell() {
         <span className="role-tag">{isCoach ? 'Coach' : 'Player'}</span>
       </div>
       <Routes>
-        <Route path="/" element={<Rounds />} />
+        <Route path="/" element={isCoach ? <Navigate to="/coach" /> : <Navigate to="/rounds" />} />
+        <Route path="/rounds" element={<Rounds />} />
         <Route path="/round/:roundId" element={<EnterScores />} />
         <Route path="/stats" element={<MyStats />} />
         <Route path="/caddie" element={<Caddie />} />
@@ -80,7 +81,7 @@ function Shell() {
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
       <nav className="bottom-nav">
-        <NavLink to="/" end>Rounds</NavLink>
+        <NavLink to="/rounds" end>Rounds</NavLink>
         <NavLink to="/stats">My Stats</NavLink>
         <NavLink to="/caddie">Caddie</NavLink>
         <NavLink to="/add-course">+ Course</NavLink>
