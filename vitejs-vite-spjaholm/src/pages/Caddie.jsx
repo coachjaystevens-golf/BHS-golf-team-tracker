@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
+import { useAuth } from '../AuthContext.jsx';
+import { suggestClub } from '../lib/caddieMath.js';
 
 // Great-circle distance between two lat/lng points, returned in YARDS.
 function yardsBetween(lat1, lng1, lat2, lng2) {
@@ -18,10 +20,25 @@ function yardsBetween(lat1, lng1, lat2, lng2) {
 
 export default function Caddie() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [courses, setCourses] = useState([]);
   const [courseId, setCourseId] = useState('');
   const [coords, setCoords] = useState({}); // hole_number -> {front_lat,...,center_lat,...}
   const [loading, setLoading] = useState(true);
+  const [clubs, setClubs] = useState([]); // player's bag for suggestions
+
+  useEffect(() => {
+    (async () => {
+      const { data: p } = await supabase
+        .from('players').select('id').eq('user_id', user.id).maybeSingle();
+      if (!p) return;
+      const { data: bag } = await supabase
+        .from('player_clubs')
+        .select('club, label, avg_yards, shot_count')
+        .eq('player_id', p.id);
+      setClubs(bag ?? []);
+    })();
+  }, [user.id]);
 
   // live GPS (mirrors CaptureCourse pattern)
   const [pos, setPos] = useState(null); // {lat,lng,acc}
@@ -94,6 +111,10 @@ export default function Caddie() {
         <button className="secondary" onClick={() => navigate('/my-clubs')}>
           ⛳ Set up my clubs
         </button>
+        <div className="spacer" />
+        <button className="secondary" onClick={() => navigate('/practice')}>
+          🎯 Practice mode (log shots)
+        </button>
       </div>
 
       {/* GPS status */}
@@ -131,16 +152,32 @@ export default function Caddie() {
               {!hasAny && <span className="muted" style={{ fontSize: 12 }}>not mapped</span>}
             </div>
             {hasAny && (
-              <div className="stat-grid" style={{ marginTop: 8 }}>
-                <div className="stat-box">
-                  <div className="n">{toCenter == null ? '—' : `${toCenter} yds`}</div>
-                  <div className="l">to center{c.center_lat == null ? ' (not mapped)' : ''}</div>
+              <>
+                <div className="stat-grid" style={{ marginTop: 8 }}>
+                  <div className="stat-box">
+                    <div className="n">{toCenter == null ? '—' : `${toCenter} yds`}</div>
+                    <div className="l">to center{c.center_lat == null ? ' (not mapped)' : ''}</div>
+                  </div>
+                  <div className="stat-box">
+                    <div className="n">{toFront == null ? '—' : `${toFront} yds`}</div>
+                    <div className="l">to front{c.front_lat == null ? ' (not mapped)' : ''}</div>
+                  </div>
                 </div>
-                <div className="stat-box">
-                  <div className="n">{toFront == null ? '—' : `${toFront} yds`}</div>
-                  <div className="l">to front{c.front_lat == null ? ' (not mapped)' : ''}</div>
-                </div>
-              </div>
+                {(() => {
+                  if (toCenter == null || clubs.length === 0) return null;
+                  const sug = suggestClub(toCenter, clubs);
+                  if (!sug) return null;
+                  return (
+                    <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 8, background: 'var(--green-100)' }}>
+                      <span className="muted" style={{ fontSize: 13 }}>Suggested: </span>
+                      <strong>{sug.label}</strong>
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        {' '}— {sug.source === 'learned' ? `your ~${sug.dist} yds` : `typical ~${sug.dist} yds`}
+                      </span>
+                    </div>
+                  );
+                })()}
+              </>
             )}
           </div>
         );
