@@ -309,10 +309,157 @@ export default function MyStats() {
           ? <p className="muted">No rounds recorded in this season yet.</p>
           : <p className="muted">Your 9-hole and 18-hole rounds are shown separately, since their scores aren't directly comparable.</p>}
       </div>
+
+      <MyGoals userId={user.id} />
+
       {!data.empty && (
         <>
           <StatBlock label="18-hole rounds" s={data.full18} />
           <StatBlock label="9-hole rounds" s={data.nine} />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---- MyGoals: a player's own practice goals (set + check off) ----
+function MyGoals({ userId }) {
+  const [playerId, setPlayerId] = useState(null);
+  const [goals, setGoals] = useState([]);
+  const [desc, setDesc] = useState('');
+  const [target, setTarget] = useState('');
+  const [error, setError] = useState('');
+  const [adding, setAdding] = useState(false);
+
+  async function load() {
+    const { data: p } = await supabase
+      .from('players')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (!p) { setPlayerId(null); return; }
+    setPlayerId(p.id);
+    const { data: g } = await supabase
+      .from('practice_goals')
+      .select('id, description, target_value, created_by, completed, created_at')
+      .eq('player_id', p.id)
+      .order('completed')
+      .order('created_at', { ascending: false });
+    setGoals(g ?? []);
+  }
+  useEffect(() => { load(); }, [userId]);
+
+  async function addGoal() {
+    setError('');
+    if (!desc.trim() || !playerId) return;
+    setAdding(true);
+    const { error } = await supabase.from('practice_goals').insert({
+      player_id: playerId,
+      description: desc.trim(),
+      target_value: target.trim() === '' ? null : Number(target),
+      created_by: 'player',
+      completed: false,
+    });
+    setAdding(false);
+    if (error) { setError(error.message); return; }
+    setDesc(''); setTarget('');
+    load();
+  }
+
+  async function toggleComplete(g) {
+    const { error } = await supabase
+      .from('practice_goals')
+      .update({ completed: !g.completed, updated_at: new Date().toISOString() })
+      .eq('id', g.id);
+    if (!error) load();
+  }
+
+  async function removeGoal(g) {
+    const { error } = await supabase.from('practice_goals').delete().eq('id', g.id);
+    if (!error) load();
+  }
+
+  if (!playerId) return null;
+
+  const active = goals.filter((g) => !g.completed);
+  const done = goals.filter((g) => g.completed);
+
+  return (
+    <div className="card">
+      <h2>My practice goals</h2>
+      <p className="muted" style={{ marginBottom: 8 }}>
+        Set something to work on — a number to hit or just a focus. Check it
+        off when you get there. Your coach can see these too.
+      </p>
+      {error && <div className="error">{error}</div>}
+
+      <label>New goal</label>
+      <input
+        value={desc}
+        onChange={(e) => setDesc(e.target.value)}
+        placeholder="e.g. Cut down 3-putts, or break 80"
+      />
+      <label>Target number (optional)</label>
+      <input
+        type="number"
+        value={target}
+        onChange={(e) => setTarget(e.target.value)}
+        placeholder="e.g. 80"
+      />
+      <div className="spacer" />
+      <button onClick={addGoal} disabled={!desc.trim() || adding}>
+        {adding ? 'Adding…' : 'Add goal'}
+      </button>
+
+      {active.length > 0 && (
+        <>
+          <p className="eyebrow" style={{ marginTop: 16 }}>Working on</p>
+          {active.map((g) => (
+            <div key={g.id} className="row-between" style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+              <div>
+                {g.description}
+                {g.target_value != null && <span className="muted"> · target {g.target_value}</span>}
+                {g.created_by === 'coach' && <span className="chip even" style={{ marginLeft: 6 }}>from coach</span>}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  style={{ width: 'auto', minHeight: 34, fontSize: 12, padding: '0 10px' }}
+                  onClick={() => toggleComplete(g)}
+                >Done</button>
+                <button
+                  className="secondary"
+                  style={{ width: 'auto', minHeight: 34, fontSize: 12, padding: '0 8px', color: 'var(--flag)', borderColor: 'var(--flag)' }}
+                  onClick={() => removeGoal(g)}
+                >✕</button>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+
+      {done.length > 0 && (
+        <>
+          <p className="eyebrow" style={{ marginTop: 16 }}>Achieved 🎉</p>
+          {done.map((g) => (
+            <div key={g.id} className="row-between" style={{ padding: '8px 0', borderBottom: '1px solid var(--line)', opacity: 0.7 }}>
+              <div style={{ textDecoration: 'line-through' }}>
+                {g.description}
+                {g.target_value != null && <span className="muted"> · target {g.target_value}</span>}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  className="secondary"
+                  style={{ width: 'auto', minHeight: 34, fontSize: 12, padding: '0 10px' }}
+                  onClick={() => toggleComplete(g)}
+                >Undo</button>
+                <button
+                  className="secondary"
+                  style={{ width: 'auto', minHeight: 34, fontSize: 12, padding: '0 8px', color: 'var(--flag)', borderColor: 'var(--flag)' }}
+                  onClick={() => removeGoal(g)}
+                >✕</button>
+              </div>
+            </div>
+          ))}
         </>
       )}
     </div>
