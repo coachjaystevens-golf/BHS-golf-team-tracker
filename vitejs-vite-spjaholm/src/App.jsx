@@ -12,6 +12,7 @@ import LiveRound from './pages/LiveRound.jsx';
 import Caddie from './pages/Caddie.jsx';
 import AddCourse from './pages/AddCourse.jsx';
 import ClubBag from './pages/ClubBag.jsx';
+import PracticeRound from './pages/PracticeRound.jsx';
 function Shell() {
   const { user, loading, isCoach, isLinked, isCaptureHelper, signOut, recovery } = useAuth();
   if (loading) {
@@ -65,6 +66,7 @@ function Shell() {
         <Route path="/stats" element={<MyStats />} />
         <Route path="/caddie" element={<Caddie />} />
         <Route path="/my-clubs" element={<ClubBag />} />
+        <Route path="/practice" element={<PracticeRound />} />
         <Route path="/add-course" element={<AddCourse />} />
         <Route
           path="/coach"
