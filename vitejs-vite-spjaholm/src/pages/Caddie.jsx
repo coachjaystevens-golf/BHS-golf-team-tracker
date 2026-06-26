@@ -127,11 +127,11 @@ export default function Caddie() {
             {hasAny && (
               <div className="stat-grid" style={{ marginTop: 8 }}>
                 <div className="stat-box">
-                  <div className="n">{toCenter == null ? '—' : toCenter}</div>
+                  <div className="n">{toCenter == null ? '—' : `${toCenter} yds`}</div>
                   <div className="l">to center{c.center_lat == null ? ' (not mapped)' : ''}</div>
                 </div>
                 <div className="stat-box">
-                  <div className="n">{toFront == null ? '—' : toFront}</div>
+                  <div className="n">{toFront == null ? '—' : `${toFront} yds`}</div>
                   <div className="l">to front{c.front_lat == null ? ' (not mapped)' : ''}</div>
                 </div>
               </div>
