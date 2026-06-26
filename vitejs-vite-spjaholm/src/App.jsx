@@ -11,6 +11,7 @@ import CaptureCourse from './pages/CaptureCourse.jsx';
 import LiveRound from './pages/LiveRound.jsx';
 import Caddie from './pages/Caddie.jsx';
 import AddCourse from './pages/AddCourse.jsx';
+import ClubBag from './pages/ClubBag.jsx';
 function Shell() {
   const { user, loading, isCoach, isLinked, isCaptureHelper, signOut, recovery } = useAuth();
   if (loading) {
@@ -62,6 +63,7 @@ function Shell() {
         <Route path="/round/:roundId" element={<EnterScores />} />
         <Route path="/stats" element={<MyStats />} />
         <Route path="/caddie" element={<Caddie />} />
+        <Route path="/my-clubs" element={<ClubBag />} />
         <Route path="/add-course" element={<AddCourse />} />
         <Route
           path="/coach"
