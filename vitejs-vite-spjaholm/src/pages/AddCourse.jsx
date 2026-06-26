@@ -57,18 +57,35 @@ export default function AddCourse() {
       const holes = teeSet?.holes ?? [];
       const pars = holes.map((h) => h.par).filter((p) => p != null);
 
+      // how many holes this course has (from API, else default 18)
+      const holeCount = pars.length || teeSet?.number_of_holes || hit.holes || 18;
+      // if the API gave no par data, default every hole to par 4 so the
+      // player can adjust each one before playing.
+      const hadApiPar = pars.length > 0;
+      const parArray = hadApiPar ? pars : Array.from({ length: holeCount }, () => 4);
+
       setPicked({
         id: hit.id,
         club_name: full.club_name ?? hit.club_name ?? '',
         course_name: full.course_name ?? hit.course_name ?? '',
         location: full.location ?? hit.location ?? {},
-        holeCount: pars.length || 18,
+        holeCount,
+        hadApiPar,
       });
-      setParList(pars);
+      setParList(parArray);
     } catch {
       setError('Could not load that course. Try again.');
     }
     setImporting(false);
+  }
+
+  function adjustPar(index, delta) {
+    setParList((prev) => {
+      const next = [...prev];
+      const cur = next[index] ?? 4;
+      next[index] = Math.min(6, Math.max(3, cur + delta));
+      return next;
+    });
   }
 
   async function confirmAdd() {
@@ -76,8 +93,6 @@ export default function AddCourse() {
     const displayName = picked.course_name && picked.club_name && picked.course_name !== picked.club_name
       ? `${picked.club_name} — ${picked.course_name}`
       : (picked.course_name || picked.club_name);
-
-    if (parList.length === 0) { setError('This course has no hole data to import. Pick another or ask your coach to add it manually.'); return; }
 
     setImporting(true);
 
@@ -169,29 +184,28 @@ export default function AddCourse() {
             {' · '}{parList.length} holes · par {parList.reduce((a, b) => a + b, 0)}
           </p>
 
-          {parList.length === 0 ? (
-            <div className="error">
-              This course doesn't have hole-by-hole data available. Pick another
-              result, or ask your coach to add it manually.
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Hole</th>
-                    {parList.map((_, i) => <th key={i} className="num">{i + 1}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td className="muted">Par</td>
-                    {parList.map((p, i) => <td key={i} className="num">{p}</td>)}
-                  </tr>
-                </tbody>
-              </table>
+          {!picked.hadApiPar && (
+            <div className="card" style={{ background: '#fff4e0', border: '1.5px solid #e0a800', marginBottom: 12 }}>
+              <p className="muted" style={{ margin: 0 }}>
+                ⚠️ Par info wasn't available for this course, so every hole is set
+                to par 4 for now. Please set the correct par for each hole below
+                before you play — tap − or + on any hole. You can also fix it later
+                from the course list.
+              </p>
             </div>
           )}
+
+          <p className="eyebrow">Par for each hole</p>
+          {parList.map((p, i) => (
+            <div key={i} className="row-between" style={{ padding: '6px 0', borderBottom: '1px solid var(--line)' }}>
+              <span>Hole {i + 1}</span>
+              <div className="stepper">
+                <button className="secondary" onClick={() => adjustPar(i, -1)}>−</button>
+                <span className="val">{p}</span>
+                <button className="secondary" onClick={() => adjustPar(i, +1)}>+</button>
+              </div>
+            </div>
+          ))}
 
           <div className="spacer" />
           <button onClick={confirmAdd} disabled={importing || parList.length === 0}>
