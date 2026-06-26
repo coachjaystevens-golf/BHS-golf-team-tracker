@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../AuthContext.jsx';
 import { toPar, formatToPar, roundTotal } from '../lib/scoring.js';
+import { enqueueScore, flushQueue, onReconnect, pendingCount, isOnline } from '../lib/offlineQueue.js';
 
 export default function EnterScores() {
   const { roundId } = useParams();
@@ -22,6 +23,7 @@ export default function EnterScores() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [coachNote, setCoachNote] = useState(null); // { id, body, acknowledged }
+  const [pending, setPending] = useState(0); // scores waiting to sync
 
   useEffect(() => {
     (async () => {
@@ -88,6 +90,23 @@ export default function EnterScores() {
     if (!error) setCoachNote({ ...coachNote, acknowledged: true });
   }
 
+  // Offline sync: show how many saves are pending, flush on mount (in case
+  // signal returned while away), and auto-flush whenever we reconnect.
+  useEffect(() => {
+    setPending(pendingCount());
+    if (isOnline()) {
+      flushQueue().then((r) => setPending(r.remaining)).catch(() => {});
+    }
+    const off = onReconnect((r) => {
+      setPending(r.remaining);
+      if (r.flushed > 0) {
+        setSavedNote(`Synced ${r.flushed} saved ${r.flushed === 1 ? 'hole' : 'holes'}`);
+        setTimeout(() => setSavedNote(''), 2000);
+      }
+    });
+    return off;
+  }, []);
+
   function getHole(hole) {
     return holeData[hole] ?? { strokes: par[hole - 1] ?? 4, putts: null, fairway: null, gir: null };
   }
@@ -124,21 +143,44 @@ export default function EnterScores() {
     }
     const h = getHole(hole);
     const strokes = h.strokes ?? par[hole - 1] ?? 4;
+    const row = {
+      round_id: roundId,
+      player_id: playerId,
+      hole_number: hole,
+      strokes,
+      putts: h.putts,
+      fairway_hit: h.fairway,
+      green_in_regulation: h.gir,
+    };
+
+    // If we already know we're offline, queue immediately without waiting
+    // for a network timeout.
+    if (!isOnline()) {
+      enqueueScore(row);
+      setPending(pendingCount());
+      setSavedNote(`Hole ${hole} saved offline — will sync`);
+      setTimeout(() => setSavedNote(''), 2000);
+      return;
+    }
+
     const { error } = await supabase
       .from('scores')
-      .upsert(
-        {
-          round_id: roundId,
-          player_id: playerId,
-          hole_number: hole,
-          strokes,
-          putts: h.putts,
-          fairway_hit: h.fairway,
-          green_in_regulation: h.gir,
-        },
-        { onConflict: 'round_id,player_id,hole_number' }
-      );
-    if (error) { setError(error.message); return; }
+      .upsert(row, { onConflict: 'round_id,player_id,hole_number' });
+
+    if (error) {
+      // Save failed (likely connectivity). Queue it rather than lose it.
+      const queued = enqueueScore(row);
+      if (queued) {
+        setPending(pendingCount());
+        setSavedNote(`Hole ${hole} saved offline — will sync`);
+        setTimeout(() => setSavedNote(''), 2000);
+      } else {
+        // Queue itself failed — surface the original error honestly.
+        setError(error.message);
+      }
+      return;
+    }
+
     setSavedNote(`Hole ${hole} saved`);
     setTimeout(() => setSavedNote(''), 1500);
 
@@ -155,7 +197,7 @@ export default function EnterScores() {
       .eq('player_id', playerId)
       .gte('hole_number', sStart)
       .lte('hole_number', sEnd);
-    if (ce) { setError(ce.message); return; }
+    if (ce) { return; } // non-fatal: the score saved; completion can re-check later
     const distinctHoles = new Set((savedRows ?? []).map((r) => r.hole_number));
     if (distinctHoles.size >= holesInRange) {
       await supabase
@@ -269,6 +311,14 @@ export default function EnterScores() {
       )}
 
       {savedNote && <div className="success">{savedNote}</div>}
+      {pending > 0 && (
+        <div className="card" style={{ background: '#fff4e0', border: '1.5px solid #e0a800' }}>
+          <p className="muted" style={{ margin: 0 }}>
+            📡 {pending} {pending === 1 ? 'hole' : 'holes'} saved on your phone, waiting for signal.
+            They'll sync automatically when you're back online.
+          </p>
+        </div>
+      )}
       {!playerId && (
         <div className="error">
           You aren't linked to the roster yet, so scores can't save.
