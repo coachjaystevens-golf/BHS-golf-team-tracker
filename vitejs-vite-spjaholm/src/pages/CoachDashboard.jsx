@@ -1168,6 +1168,8 @@ function Analysis() {
           puttsSum: 0, puttsHoles: 0,
           fairwayHit: 0, fairwayTotal: 0,
           girHit: 0, girTotal: 0,
+          // ↓ shortgame — season totals for up/down and bunker saves
+          udMade: 0, udAtt: 0, bnMade: 0, bnAtt: 0,
         };
       }
       const P = players[pid];
@@ -1193,6 +1195,40 @@ function Analysis() {
       }
     }
 
+    // ↓ shortgame — second query: round_stats lives in its own table, not
+    // in scores, so fetch it separately and merge into the same per-player
+    // aggregate. Filtered to this season via the joined round.
+    const { data: sgRows, error: sgErr } = await supabase
+      .from('round_stats')
+      .select('up_down_made, up_down_attempts, bunker_made, bunker_attempts, player_id, players ( id, full_name, gender ), rounds!inner ( season_id )')
+      .eq('rounds.season_id', seasonId);
+    if (sgErr) { setError(sgErr.message); setLoading(false); return; }
+
+    for (const r of sgRows ?? []) {
+      const pid = r.player_id;
+      if (!pid) continue;
+      // a player may have short-game stats even if (unusually) we didn't
+      // build them from scores above, so create the bucket if missing
+      if (!players[pid]) {
+        players[pid] = {
+          name: r.players?.full_name ?? 'Player',
+          gender: r.players?.gender ?? 'boys',
+          parType: { 3: { n: 0, sum: 0 }, 4: { n: 0, sum: 0 }, 5: { n: 0, sum: 0 } },
+          courses: {},
+          blowups: 0, holes: 0, rounds: new Set(),
+          puttsSum: 0, puttsHoles: 0,
+          fairwayHit: 0, fairwayTotal: 0,
+          girHit: 0, girTotal: 0,
+          udMade: 0, udAtt: 0, bnMade: 0, bnAtt: 0,
+        };
+      }
+      const P = players[pid];
+      P.udMade += r.up_down_made ?? 0;
+      P.udAtt += r.up_down_attempts ?? 0;
+      P.bnMade += r.bunker_made ?? 0;
+      P.bnAtt += r.bunker_attempts ?? 0;
+    }
+
     // team-wide par-type
     const team = { 3: { n: 0, sum: 0 }, 4: { n: 0, sum: 0 }, 5: { n: 0, sum: 0 } };
     for (const P of Object.values(players)) {
@@ -1207,6 +1243,8 @@ function Analysis() {
 
   const avg = (sum, n) => (n === 0 ? null : Math.round((sum / n) * 100) / 100);
   const fmtAvg = (v) => (v === null ? '—' : (v > 0 ? `+${v}` : `${v}`));
+  // ↓ shortgame — percentage helper (null when no attempts, so we show —)
+  const pctOf = (made, att) => (att > 0 ? Math.round((made / att) * 100) : null);
 
   const seasonSwitcher = seasons.length > 0 && (
     <div className="card">
@@ -1359,6 +1397,54 @@ function Analysis() {
         <p className="muted" style={{ marginTop: 6 }}>
           Putts/rd assumes putts were logged on every hole of a round; if some
           holes were skipped, treat it as approximate.
+        </p>
+      </div>
+
+      {/* ↓ shortgame — Short game: up & downs and bunker saves */}
+      <div className="card">
+        <h2>Short game</h2>
+        <p className="muted" style={{ marginBottom: 8 }}>
+          Up &amp; down % (getting in with two or fewer from off the green) and
+          sand-save % (up &amp; down from a greenside bunker). Counts come from
+          what players logged at the end of each round.
+        </p>
+        <div style={{ overflowX: 'auto' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Player</th>
+                <th className="num">Up &amp; down</th>
+                <th className="num">Sand save</th>
+              </tr>
+            </thead>
+            <tbody>
+              {playerList.map((p) => {
+                const udPct = pctOf(p.udMade, p.udAtt);
+                const bnPct = pctOf(p.bnMade, p.bnAtt);
+                return (
+                  <tr key={p.name}>
+                    <td>{p.name}</td>
+                    <td className="num">
+                      {udPct === null ? '—' : `${udPct}%`}
+                      {p.udAtt > 0 && (
+                        <span className="muted" style={{ fontSize: 12 }}> ({p.udMade}/{p.udAtt})</span>
+                      )}
+                    </td>
+                    <td className="num">
+                      {bnPct === null ? '—' : `${bnPct}%`}
+                      {p.bnAtt > 0 && (
+                        <span className="muted" style={{ fontSize: 12 }}> ({p.bnMade}/{p.bnAtt})</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="muted" style={{ marginTop: 6 }}>
+          A dash means nothing logged yet. Sand saves are a subset of up &amp;
+          downs, so sand-save attempts will usually be the smaller number.
         </p>
       </div>
 
