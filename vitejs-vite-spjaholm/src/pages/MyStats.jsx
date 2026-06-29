@@ -31,6 +31,15 @@ export default function MyStats() {
         .eq('rounds.season_id', seasonId);
       if (e) { setError(e.message); setLoading(false); return; }
 
+      // pull this player's short-game stats (up&down, bunker) for the season
+      const { data: sgRows } = await supabase
+        .from('round_stats')
+        .select('round_id, up_down_made, up_down_attempts, bunker_made, bunker_attempts, rounds!inner ( season_id )')
+        .eq('player_id', p.id)
+        .eq('rounds.season_id', seasonId);
+      const sgByRound = {};
+      for (const s of sgRows ?? []) sgByRound[s.round_id] = s;
+
       // group by round
       const byRound = {};
       for (const row of rows ?? []) {
@@ -43,6 +52,7 @@ export default function MyStats() {
             start: rd.start_hole ?? 1,
             end: rd.end_hole ?? 18,
             played_on: rd.played_on ?? null,
+            shortGame: sgByRound[rid] ?? null,
             scores: [],
           };
         }
@@ -73,12 +83,22 @@ export default function MyStats() {
         let puttsSum = 0, puttsHoles = 0, threePutts = 0;
         let fairwayHits = 0, fairwayChances = 0;
         let girHits = 0, girHoles = 0;
+        // short-game accumulators
+        let udMade = 0, udAtt = 0, bnMade = 0, bnAtt = 0;
 
         for (const r of list) {
           const t = tallyResults(r.scores, r.par);
           for (const k in tally) tally[k] += t[k];
           const tp = toPar(r.scores, r.par);
           if (best === null || tp < best) best = tp;
+
+          // fold in this round's short game, if recorded
+          if (r.shortGame) {
+            udMade += r.shortGame.up_down_made ?? 0;
+            udAtt += r.shortGame.up_down_attempts ?? 0;
+            bnMade += r.shortGame.bunker_made ?? 0;
+            bnAtt += r.shortGame.bunker_attempts ?? 0;
+          }
 
           for (const s of r.scores) {
             const holePar = r.par[s.hole_number - 1];
@@ -144,6 +164,12 @@ export default function MyStats() {
             fairwayHits, fairwayChances,
             girPct: pct(girHits, girHoles),
             girHits, girHoles,
+          },
+          shortGame: {
+            udPct: pct(udMade, udAtt),
+            udMade, udAtt,
+            sandPct: pct(bnMade, bnAtt),
+            bnMade, bnAtt,
           },
         };
       };
@@ -292,6 +318,28 @@ export default function MyStats() {
               <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
                 Based on holes where you logged putts, fairways, and greens —
                 fairway % counts par 4s and 5s only.
+              </p>
+            </>
+          )}
+
+          {/* Short game — only shown if up&down or bunker attempts were logged */}
+          {(s.shortGame.udAtt > 0 || s.shortGame.bnAtt > 0) && (
+            <>
+              <p className="eyebrow" style={{ marginTop: 16 }}>Short game</p>
+              <div className="stat-grid">
+                <div className="stat-box">
+                  <div className="n">{s.shortGame.udPct == null ? '—' : `${s.shortGame.udPct}%`}</div>
+                  <div className="l">Up &amp; down</div>
+                </div>
+                <div className="stat-box">
+                  <div className="n">{s.shortGame.sandPct == null ? '—' : `${s.shortGame.sandPct}%`}</div>
+                  <div className="l">Sand saves</div>
+                </div>
+              </div>
+              <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+                Up &amp; down: {s.shortGame.udMade}/{s.shortGame.udAtt} ·
+                Sand saves: {s.shortGame.bnMade}/{s.shortGame.bnAtt} this season.
+                Short game is where you save the most strokes.
               </p>
             </>
           )}
