@@ -13,6 +13,7 @@ import Caddie from './pages/Caddie.jsx';
 import AddCourse from './pages/AddCourse.jsx';
 import ClubBag from './pages/ClubBag.jsx';
 import PracticeRound from './pages/PracticeRound.jsx';
+import Drills from './pages/Drills.jsx';
 function Shell() {
   const { user, loading, isCoach, isLinked, isCaptureHelper, signOut, recovery } = useAuth();
   if (loading) {
@@ -67,6 +68,7 @@ function Shell() {
         <Route path="/caddie" element={<Caddie />} />
         <Route path="/my-clubs" element={<ClubBag />} />
         <Route path="/practice" element={<PracticeRound />} />
+        <Route path="/drills" element={<Drills />} />
         <Route path="/add-course" element={<AddCourse />} />
         <Route
           path="/coach"
@@ -85,6 +87,7 @@ function Shell() {
       <nav className="bottom-nav">
         <NavLink to="/rounds" end>Rounds</NavLink>
         <NavLink to="/stats">My Stats</NavLink>
+        <NavLink to="/drills">Drills</NavLink>
         <NavLink to="/caddie">Caddie</NavLink>
         <NavLink to="/add-course">+ Course</NavLink>
         {isCaptureHelper && <NavLink to="/capture">Capture</NavLink>}
