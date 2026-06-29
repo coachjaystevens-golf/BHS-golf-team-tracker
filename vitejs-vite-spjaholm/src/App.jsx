@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext.jsx';
 import Login from './pages/Login.jsx';
@@ -16,6 +17,7 @@ import PracticeRound from './pages/PracticeRound.jsx';
 import Drills from './pages/Drills.jsx';
 function Shell() {
   const { user, loading, isCoach, isLinked, isCaptureHelper, signOut, recovery } = useAuth();
+  const [moreOpen, setMoreOpen] = useState(false);
   if (loading) {
     return (
       <div className="app-shell">
@@ -54,6 +56,7 @@ function Shell() {
       </div>
     );
   }
+  const closeMore = () => setMoreOpen(false);
   return (
     <div className="app-shell">
       <div className="topbar">
@@ -84,16 +87,34 @@ function Shell() {
         />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
+
+      {/* expanded "More" sheet — reuses the bottom-nav look, lifted above
+          the bar with a divider tint so it reads as its own row. Inline
+          styles keep it self-contained (no App.css change needed). */}
+      {moreOpen && (
+        <nav
+          className="bottom-nav"
+          style={{ borderTop: '1px solid var(--line)', background: 'var(--green-100)' }}
+        >
+          <NavLink to="/add-course" onClick={closeMore}>+ Course</NavLink>
+          {isCaptureHelper && <NavLink to="/capture" onClick={closeMore}>Capture</NavLink>}
+          {isCoach && <NavLink to="/live" onClick={closeMore}>Live</NavLink>}
+          {isCoach && <NavLink to="/coach" onClick={closeMore}>Coach</NavLink>}
+          <a onClick={() => { closeMore(); signOut(); }} style={{ cursor: 'pointer' }}>Sign out</a>
+        </nav>
+      )}
+
       <nav className="bottom-nav">
-        <NavLink to="/rounds" end>Rounds</NavLink>
-        <NavLink to="/stats">My Stats</NavLink>
-        <NavLink to="/drills">Drills</NavLink>
-        <NavLink to="/caddie">Caddie</NavLink>
-        <NavLink to="/add-course">+ Course</NavLink>
-        {isCaptureHelper && <NavLink to="/capture">Capture</NavLink>}
-        {isCoach && <NavLink to="/live">Live</NavLink>}
-        {isCoach && <NavLink to="/coach">Coach</NavLink>}
-        <a onClick={signOut} style={{ cursor: 'pointer' }}>Sign out</a>
+        <NavLink to="/rounds" end onClick={closeMore}>Rounds</NavLink>
+        <NavLink to="/stats" onClick={closeMore}>My Stats</NavLink>
+        <NavLink to="/drills" onClick={closeMore}>Drills</NavLink>
+        <NavLink to="/caddie" onClick={closeMore}>Caddie</NavLink>
+        <a
+          onClick={() => setMoreOpen((v) => !v)}
+          style={{ cursor: 'pointer', fontWeight: moreOpen ? 700 : undefined }}
+        >
+          More {moreOpen ? '▲' : '▾'}
+        </a>
       </nav>
     </div>
   );
