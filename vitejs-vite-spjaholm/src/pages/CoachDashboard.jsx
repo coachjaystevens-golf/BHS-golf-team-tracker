@@ -28,6 +28,7 @@ export default function CoachDashboard() {
             <button className={tab === 'courses' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('courses')}>Courses</button>
             <button className={tab === 'seasons' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('seasons')}>Seasons</button>
             <button className={tab === 'analysis' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('analysis')}>Analysis</button>
+            <button className={tab === 'export' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('export')}>Export</button>
           </div>
         )}
       </div>
@@ -40,6 +41,7 @@ export default function CoachDashboard() {
       {tab === 'courses' && <Courses />}
       {tab === 'seasons' && <Seasons />}
       {tab === 'analysis' && <Analysis />}
+      {tab === 'export' && <ExportData />}
     </div>
   );
 }
@@ -1817,6 +1819,276 @@ function CoachGoals() {
         <h2>Girls — goals</h2>
         {girls.length === 0 ? <p className="muted">No girls on the roster.</p>
           : girls.map((p) => <PlayerGoals key={p.id} p={p} />)}
+      </div>
+    </>
+  );
+}
+
+// ---- ExportData: build a multi-sheet Excel workbook for the season ----
+// Summary sheet (one row per player) + one sheet per player with their
+// round-by-round detail. Uses SheetJS loaded on demand from a CDN, so no
+// package.json dependency is needed.
+function ExportData() {
+  const { seasons, seasonId, setSeasonId, selectedSeason } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [status, setStatus] = useState('');
+
+  // Load SheetJS once, from CDN, returning the global XLSX.
+  function loadXLSX() {
+    return new Promise((resolve, reject) => {
+      if (window.XLSX) { resolve(window.XLSX); return; }
+      const script = document.createElement('script');
+      script.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+      script.onload = () => window.XLSX ? resolve(window.XLSX) : reject(new Error('XLSX failed to load'));
+      script.onerror = () => reject(new Error('Could not load the spreadsheet library. Check your connection and try again.'));
+      document.head.appendChild(script);
+    });
+  }
+
+  // Make a worksheet name safe: <=31 chars, no : \ / ? * [ ]
+  function safeSheetName(name, used) {
+    let base = (name || 'Player').replace(/[:\\/?*[\]]/g, ' ').trim().slice(0, 28) || 'Player';
+    let candidate = base;
+    let n = 2;
+    while (used.has(candidate.toLowerCase())) {
+      candidate = `${base.slice(0, 28 - String(n).length - 1)} ${n}`;
+      n += 1;
+    }
+    used.add(candidate.toLowerCase());
+    return candidate;
+  }
+
+  async function runExport() {
+    if (!seasonId) { setError('Pick a season first.'); return; }
+    setBusy(true);
+    setError('');
+    setStatus('Loading…');
+
+    try {
+      const XLSX = await loadXLSX();
+      setStatus('Pulling scores…');
+
+      // 1) all scores this season, with player + course par + round info
+      const { data: scoreRows, error: e1 } = await supabase
+        .from('scores')
+        .select('strokes, hole_number, putts, fairway_hit, green_in_regulation, players ( id, full_name, gender ), rounds!inner ( id, played_on, season_id, courses ( name, par_per_hole ) )')
+        .eq('rounds.season_id', seasonId);
+      if (e1) throw new Error(e1.message);
+
+      // 2) all short-game stats this season
+      const { data: sgRows, error: e2 } = await supabase
+        .from('round_stats')
+        .select('up_down_made, up_down_attempts, bunker_made, bunker_attempts, player_id, round_id, rounds!inner ( season_id )')
+        .eq('rounds.season_id', seasonId);
+      if (e2) throw new Error(e2.message);
+
+      setStatus('Crunching…');
+
+      // index short-game by player+round
+      const sgByKey = {};
+      for (const s of sgRows ?? []) {
+        sgByKey[`${s.player_id}__${s.round_id}`] = s;
+      }
+
+      // build per-player -> per-round structure
+      // players[pid] = { name, gender, rounds: { rid: { date, course, par, scores{hole:strokes}, putts{hole:n}, fw{hit,total}, gir{hit,total} } } }
+      const players = {};
+      for (const r of scoreRows ?? []) {
+        const pid = r.players?.id;
+        const rid = r.rounds?.id;
+        if (!pid || !rid) continue;
+        if (!players[pid]) {
+          players[pid] = { name: r.players.full_name, gender: r.players.gender, rounds: {} };
+        }
+        if (!players[pid].rounds[rid]) {
+          players[pid].rounds[rid] = {
+            date: r.rounds?.played_on ?? '',
+            course: r.rounds?.courses?.name ?? '',
+            par: r.rounds?.courses?.par_per_hole ?? [],
+            scores: {},
+          };
+        }
+        players[pid].rounds[rid].scores[r.hole_number] = {
+          strokes: r.strokes,
+          putts: r.putts,
+          fairway: r.fairway_hit,
+          gir: r.green_in_regulation,
+        };
+      }
+
+      // helpers
+      const sum = (arr) => arr.reduce((a, b) => a + b, 0);
+
+      // compute per-round derived numbers for a player
+      function roundRows(p, pid) {
+        const out = [];
+        for (const [rid, R] of Object.entries(p.rounds)) {
+          const holes = Object.keys(R.scores).map(Number).sort((a, b) => a - b);
+          const strokes = holes.map((h) => R.scores[h].strokes).filter((v) => v != null);
+          const total = sum(strokes);
+          // to-par over the holes actually played
+          let parPlayed = 0;
+          for (const h of holes) { const hp = R.par[h - 1]; if (hp) parPlayed += hp; }
+          const toParVal = parPlayed ? total - parPlayed : null;
+          const putts = holes.map((h) => R.scores[h].putts).filter((v) => v != null);
+          const puttTotal = putts.length ? sum(putts) : null;
+          const sg = sgByKey[`${pid}__${rid}`];
+          out.push({
+            date: R.date,
+            course: R.course,
+            holes: holes.length,
+            total,
+            toPar: toParVal,
+            putts: puttTotal,
+            ud: sg ? `${sg.up_down_made}/${sg.up_down_attempts}` : '',
+            bunker: sg ? `${sg.bunker_made}/${sg.bunker_attempts}` : '',
+            // raw for season aggregation:
+            _toParNum: toParVal,
+            _strokesTotal: total,
+            _puttTotal: puttTotal,
+            _udMade: sg?.up_down_made ?? 0, _udAtt: sg?.up_down_attempts ?? 0,
+            _bnMade: sg?.bunker_made ?? 0, _bnAtt: sg?.bunker_attempts ?? 0,
+          });
+        }
+        out.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        return out;
+      }
+
+      const fmtToPar = (v) => (v == null ? '' : v === 0 ? 'E' : v > 0 ? `+${v}` : `${v}`);
+      const pct = (made, att) => (att > 0 ? Math.round((made / att) * 100) : null);
+
+      // ---- Summary sheet ----
+      const summaryHeader = [
+        'Player', 'Team', 'Rounds', 'Scoring avg', 'Putts/rd',
+        'Fairway %', 'GIR %', 'Up&down %', 'Sand save %', 'Blow-ups',
+      ];
+      const summaryRows = [summaryHeader];
+
+      const playerList = Object.entries(players)
+        .map(([pid, p]) => ({ ...p, __id: pid }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      for (const p of playerList) {
+        const rrows = roundRows(p, p.__id);
+        const nRounds = rrows.length;
+        const avg = nRounds ? Math.round((sum(rrows.map((r) => r._strokesTotal)) / nRounds) * 10) / 10 : '';
+        const puttRounds = rrows.filter((r) => r._puttTotal != null);
+        const puttsPerRound = puttRounds.length
+          ? Math.round((sum(puttRounds.map((r) => r._puttTotal)) / puttRounds.length) * 10) / 10
+          : '';
+
+        // fairway / gir across all holes
+        let fwHit = 0, fwTot = 0, girHit = 0, girTot = 0, blowups = 0;
+        for (const R of Object.values(p.rounds)) {
+          for (const h of Object.keys(R.scores).map(Number)) {
+            const cell = R.scores[h];
+            const hp = R.par[h - 1];
+            if (cell.fairway != null && hp >= 4) { fwTot += 1; if (cell.fairway) fwHit += 1; }
+            if (cell.gir != null) { girTot += 1; if (cell.gir) girHit += 1; }
+            if (hp && cell.strokes != null && cell.strokes - hp >= 2) blowups += 1;
+          }
+        }
+        const udMade = sum(rrows.map((r) => r._udMade));
+        const udAtt = sum(rrows.map((r) => r._udAtt));
+        const bnMade = sum(rrows.map((r) => r._bnMade));
+        const bnAtt = sum(rrows.map((r) => r._bnAtt));
+
+        const fwPct = fwTot ? `${Math.round((fwHit / fwTot) * 100)}%` : '';
+        const girPct = girTot ? `${Math.round((girHit / girTot) * 100)}%` : '';
+        const udP = pct(udMade, udAtt);
+        const bnP = pct(bnMade, bnAtt);
+
+        summaryRows.push([
+          p.name,
+          p.gender,
+          nRounds,
+          avg,
+          puttsPerRound,
+          fwPct,
+          girPct,
+          udP == null ? '' : `${udP}%`,
+          bnP == null ? '' : `${bnP}%`,
+          blowups,
+        ]);
+      }
+
+      const wb = XLSX.utils.book_new();
+      const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+      wsSummary['!cols'] = [
+        { wch: 22 }, { wch: 7 }, { wch: 8 }, { wch: 11 }, { wch: 9 },
+        { wch: 10 }, { wch: 8 }, { wch: 11 }, { wch: 12 }, { wch: 9 },
+      ];
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+      // ---- Per-player sheets ----
+      const usedNames = new Set(['summary']);
+      for (const p of playerList) {
+        const rrows = roundRows(p, p.__id);
+        const header = ['Date', 'Course', 'Holes', 'Total', 'To par', 'Putts', 'Up&down', 'Bunker'];
+        const aoa = [
+          [p.name],            // title row
+          [],                  // spacer
+          header,
+          ...rrows.map((r) => [
+            r.date, r.course, r.holes, r.total, fmtToPar(r.toPar),
+            r.putts ?? '', r.ud, r.bunker,
+          ]),
+        ];
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        ws['!cols'] = [
+          { wch: 12 }, { wch: 22 }, { wch: 7 }, { wch: 8 },
+          { wch: 8 }, { wch: 7 }, { wch: 9 }, { wch: 9 },
+        ];
+        XLSX.utils.book_append_sheet(wb, ws, safeSheetName(p.name, usedNames));
+      }
+
+      setStatus('Building file…');
+      const seasonName = (selectedSeason?.name || 'season').replace(/[^a-z0-9]+/gi, '_');
+      XLSX.writeFile(wb, `BHS_Golf_${seasonName}.xlsx`);
+      setStatus('Done — check your downloads.');
+      setTimeout(() => setStatus(''), 4000);
+    } catch (err) {
+      setError(err.message || 'Export failed.');
+      setStatus('');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      {seasons.length > 0 && (
+        <div className="card">
+          <label>Season</label>
+          <select value={seasonId} onChange={(e) => setSeasonId(e.target.value)}>
+            {seasons.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}{s.is_active ? ' (current)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div className="card">
+        <h2>Export to Excel</h2>
+        <p className="muted" style={{ marginBottom: 8 }}>
+          Builds one spreadsheet for {selectedSeason?.name ?? 'the season'}: a
+          Summary sheet with every player's season numbers, plus a separate
+          sheet for each player showing their round-by-round results — total,
+          to par, putts, up &amp; downs, and bunker saves.
+        </p>
+        {error && <div className="error">{error}</div>}
+        {status && <div className="success">{status}</div>}
+        <div className="spacer" />
+        <button onClick={runExport} disabled={busy}>
+          {busy ? 'Working…' : 'Download spreadsheet'}
+        </button>
+        <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+          The file downloads to your device. Needs an internet connection. Open
+          it in Excel, Numbers, or Google Sheets.
+        </p>
       </div>
     </>
   );
