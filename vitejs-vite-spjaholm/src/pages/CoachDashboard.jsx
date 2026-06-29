@@ -43,7 +43,7 @@ export default function CoachDashboard() {
       {tab === 'seasons' && <Seasons />}
       {tab === 'analysis' && <Analysis />}
       {tab === 'drillfocus' && <DrillFocus />}
-      {tab === 'export' && <ExportData />}
+      {tab === 'export' && <><ExportData /><PdfReports /></>}
     </div>
   );
 }
@@ -2236,5 +2236,374 @@ function DrillFocus() {
         </div>
       ))}
     </>
+  );
+}
+
+// ---- PdfReports: per-player season reports + team report as PDF ----
+// Uses jsPDF from CDN (same self-contained pattern as the Excel export).
+// All charts/tables are drawn with jsPDF vector primitives — no plugins.
+function PdfReports() {
+  const { seasons, seasonId, setSeasonId, selectedSeason } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [status, setStatus] = useState('');
+  const [players, setPlayers] = useState([]);   // [{id, name, gender}]
+  const [pickedPlayer, setPickedPlayer] = useState('all');
+
+  // load roster names for the picker whenever season changes
+  useEffect(() => {
+    (async () => {
+      if (!seasonId) { setPlayers([]); return; }
+      const { data } = await supabase
+        .from('scores')
+        .select('players ( id, full_name, gender ), rounds!inner ( season_id )')
+        .eq('rounds.season_id', seasonId);
+      const byId = {};
+      for (const r of data ?? []) {
+        const p = r.players;
+        if (p && !byId[p.id]) byId[p.id] = { id: p.id, name: p.full_name, gender: p.gender };
+      }
+      setPlayers(Object.values(byId).sort((a, b) => a.name.localeCompare(b.name)));
+    })();
+  }, [seasonId]);
+
+  function loadJsPDF() {
+    return new Promise((resolve, reject) => {
+      if (window.jspdf && window.jspdf.jsPDF) { resolve(window.jspdf.jsPDF); return; }
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+      s.onload = () => window.jspdf ? resolve(window.jspdf.jsPDF) : reject(new Error('jsPDF failed to load'));
+      s.onerror = () => reject(new Error('Could not load the PDF library. Check your connection and try again.'));
+      document.head.appendChild(s);
+    });
+  }
+
+  // ---- pull + shape all season data once ----
+  async function gatherData() {
+    const { data: rows, error: e1 } = await supabase
+      .from('scores')
+      .select('strokes, hole_number, putts, fairway_hit, green_in_regulation, players ( id, full_name, gender ), rounds!inner ( id, played_on, season_id, courses ( name, par_per_hole ) )')
+      .eq('rounds.season_id', seasonId);
+    if (e1) throw new Error(e1.message);
+
+    const { data: sg, error: e2 } = await supabase
+      .from('round_stats')
+      .select('up_down_made, up_down_attempts, bunker_made, bunker_attempts, player_id, round_id, rounds!inner ( season_id )')
+      .eq('rounds.season_id', seasonId);
+    if (e2) throw new Error(e2.message);
+
+    const sgByKey = {};
+    for (const s of sg ?? []) sgByKey[`${s.player_id}__${s.round_id}`] = s;
+
+    // players[pid] = { name, gender, rounds: {rid: {date,course,par,holes{}}} }
+    const players = {};
+    for (const r of rows ?? []) {
+      const pid = r.players?.id, rid = r.rounds?.id;
+      if (!pid || !rid) continue;
+      if (!players[pid]) players[pid] = { id: pid, name: r.players.full_name, gender: r.players.gender, rounds: {} };
+      if (!players[pid].rounds[rid]) players[pid].rounds[rid] = {
+        date: r.rounds?.played_on ?? '', course: r.rounds?.courses?.name ?? '',
+        par: r.rounds?.courses?.par_per_hole ?? [], holes: {},
+      };
+      players[pid].rounds[rid].holes[r.hole_number] = {
+        strokes: r.strokes, putts: r.putts, fairway: r.fairway_hit, gir: r.green_in_regulation,
+      };
+    }
+    return { players, sgByKey };
+  }
+
+  const sum = (a) => a.reduce((x, y) => x + y, 0);
+
+  // derive a player's season summary + per-round rows
+  function summarize(p, sgByKey) {
+    const rounds = [];
+    let bestToPar = null, blowups = 0;
+    let fwHit = 0, fwTot = 0, girHit = 0, girTot = 0;
+    let udMade = 0, udAtt = 0, bnMade = 0, bnAtt = 0;
+    let puttRoundsSum = 0, puttRoundsN = 0;
+    const parTypeSum = { 3: 0, 4: 0, 5: 0 }, parTypeN = { 3: 0, 4: 0, 5: 0 };
+
+    for (const [rid, R] of Object.entries(p.rounds)) {
+      const holeNums = Object.keys(R.holes).map(Number).sort((a, b) => a - b);
+      const strokes = holeNums.map(h => R.holes[h].strokes).filter(v => v != null);
+      const total = sum(strokes);
+      let parPlayed = 0;
+      for (const h of holeNums) { const hp = R.par[h - 1]; if (hp) parPlayed += hp; }
+      const toPar = parPlayed ? total - parPlayed : null;
+      if (toPar != null && (bestToPar == null || toPar < bestToPar)) bestToPar = toPar;
+
+      const putts = holeNums.map(h => R.holes[h].putts).filter(v => v != null);
+      const puttTotal = putts.length ? sum(putts) : null;
+      if (puttTotal != null) { puttRoundsSum += puttTotal; puttRoundsN += 1; }
+
+      for (const h of holeNums) {
+        const cell = R.holes[h], hp = R.par[h - 1];
+        if (!hp) continue;
+        const diff = cell.strokes - hp;
+        if (diff >= 2) blowups += 1;
+        if (parTypeN[hp] != null) { parTypeSum[hp] += diff; parTypeN[hp] += 1; }
+        if (cell.fairway != null && hp >= 4) { fwTot += 1; if (cell.fairway) fwHit += 1; }
+        if (cell.gir != null) { girTot += 1; if (cell.gir) girHit += 1; }
+      }
+
+      const s = sgByKey[`${p.id}__${rid}`];
+      if (s) { udMade += s.up_down_made; udAtt += s.up_down_attempts; bnMade += s.bunker_made; bnAtt += s.bunker_attempts; }
+
+      rounds.push({
+        date: R.date, course: R.course, total, toPar, putts: puttTotal,
+        ud: s ? `${s.up_down_made}/${s.up_down_attempts}` : '-',
+        bunker: s ? `${s.bunker_made}/${s.bunker_attempts}` : '-',
+      });
+    }
+    rounds.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+    const nRounds = rounds.length;
+    const avg = nRounds ? Math.round((sum(rounds.map(r => r.total)) / nRounds) * 10) / 10 : 0;
+    const pct = (m, a) => (a > 0 ? Math.round((m / a) * 100) : null);
+    const avgVs = (s, n) => (n ? Math.round((s / n) * 10) / 10 : null);
+
+    return {
+      name: p.name, gender: p.gender, nRounds, avg, bestToPar, blowups, rounds,
+      puttsRd: puttRoundsN ? Math.round((puttRoundsSum / puttRoundsN) * 10) / 10 : null,
+      fwPct: pct(fwHit, fwTot), girPct: pct(girHit, girTot),
+      udPct: pct(udMade, udAtt), sandPct: pct(bnMade, bnAtt),
+      udMade, udAtt, bnMade, bnAtt,
+      parType: { 3: avgVs(parTypeSum[3], parTypeN[3]), 4: avgVs(parTypeSum[4], parTypeN[4]), 5: avgVs(parTypeSum[5], parTypeN[5]) },
+    };
+  }
+
+  const fmtTP = (v) => (v == null ? '-' : v === 0 ? 'E' : v > 0 ? `+${v}` : `${v}`);
+
+  // ---- draw one player's report onto the doc, return ending y ----
+  function drawPlayer(doc, s) {
+    const L = 15, R = 195, W = R - L;
+    let y = 20;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor(0);
+    doc.text(s.name, L, y); y += 6;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(110);
+    doc.text(`${s.gender === 'boys' ? 'Boys' : 'Girls'} · ${selectedSeason?.name ?? 'Season'} · Golf Team Tracker`, L, y);
+    doc.setTextColor(0); y += 4;
+    doc.setLineWidth(0.6); doc.line(L, y, R, y); y += 8;
+
+    // stat cards
+    const cards = [
+      ['Scoring avg', String(s.avg)],
+      ['Best round', fmtTP(s.bestToPar)],
+      ['Rounds', String(s.nRounds)],
+      ['Up & down', s.udPct == null ? '-' : s.udPct + '%'],
+    ];
+    const cw = W / 4;
+    cards.forEach((c, i) => {
+      const x = L + i * cw;
+      doc.setFillColor(241, 239, 232); doc.rect(x + 1, y, cw - 2, 16, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(0);
+      doc.text(c[1], x + cw / 2, y + 8, { align: 'center' });
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110);
+      doc.text(c[0], x + cw / 2, y + 13, { align: 'center' });
+    });
+    doc.setTextColor(0); y += 24;
+
+    // scoring trend
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    doc.text('Scoring trend', L, y); y += 4;
+    if (s.rounds.length >= 2) {
+      const cx = L, cy = y, cW = W, cH = 34;
+      doc.setDrawColor(180); doc.setLineWidth(0.3);
+      doc.line(cx + 12, cy, cx + 12, cy + cH);
+      doc.line(cx + 12, cy + cH, cx + cW, cy + cH);
+      const totals = s.rounds.map(r => r.total);
+      const lo = Math.min(...totals) - 1, hi = Math.max(...totals) + 1;
+      const px = (i) => cx + 18 + (i / (s.rounds.length - 1)) * (cW - 24);
+      const py = (v) => cy + (1 - (v - lo) / (hi - lo)) * cH;
+      doc.setDrawColor(83, 74, 183); doc.setLineWidth(0.8);
+      for (let i = 1; i < s.rounds.length; i++) doc.line(px(i - 1), py(totals[i - 1]), px(i), py(totals[i]));
+      doc.setFillColor(83, 74, 183);
+      s.rounds.forEach((r, i) => doc.circle(px(i), py(r.total), 1, 'F'));
+      doc.setFontSize(7); doc.setTextColor(140);
+      doc.text('earliest to latest · lower is better', cx + cW, cy + cH + 4, { align: 'right' });
+      doc.setTextColor(0); y += cH + 10;
+    } else {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(140);
+      doc.text('Needs at least 2 rounds to chart a trend.', L, y + 5); doc.setTextColor(0); y += 12;
+    }
+
+    // two-column: by hole type (bars) | short game (list)
+    const colTop = y, colMid = L + W / 2;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    doc.text('By hole type (vs par)', L, colTop);
+    doc.text('Short game', colMid + 4, colTop);
+    let yl = colTop + 5;
+    [3, 4, 5].forEach((k) => {
+      const v = s.parType[k];
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(90);
+      doc.text(`Par ${k}`, L, yl + 3);
+      const barX = L + 14, maxBar = 55, val = v == null ? 0 : Math.min(Math.abs(v), 2);
+      const bw = (val / 2) * maxBar;
+      doc.setFillColor(v != null && v <= 0.8 ? 29 : 186, v != null && v <= 0.8 ? 158 : 117, v != null && v <= 0.8 ? 117 : 23);
+      doc.rect(barX, yl, bw, 4, 'F');
+      doc.setTextColor(90); doc.text(v == null ? '-' : fmtTP(Math.round(v * 10) / 10), barX + maxBar + 4, yl + 3);
+      yl += 8;
+    });
+    doc.setTextColor(0);
+    // short game list (right col)
+    let yr = colTop + 5;
+    const sgLines = [
+      ['Up & down %', s.udPct == null ? '-' : `${s.udPct}% (${s.udMade}/${s.udAtt})`],
+      ['Sand save %', s.sandPct == null ? '-' : `${s.sandPct}% (${s.bnMade}/${s.bnAtt})`],
+      ['Putts / round', s.puttsRd == null ? '-' : String(s.puttsRd)],
+      ['Fairways', s.fwPct == null ? '-' : `${s.fwPct}%`],
+      ['Greens (GIR)', s.girPct == null ? '-' : `${s.girPct}%`],
+      ['Blow-up holes', String(s.blowups)],
+    ];
+    doc.setFontSize(8);
+    sgLines.forEach((ln) => {
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(90);
+      doc.text(ln[0], colMid + 4, yr + 3);
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(0);
+      doc.text(ln[1], R, yr + 3, { align: 'right' });
+      yr += 6;
+    });
+    doc.setTextColor(0);
+    y = Math.max(yl, yr) + 6;
+
+    // round-by-round table
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    doc.text('Round by round', L, y); y += 5;
+    const cols = ['Date', 'Course', 'Total', 'To par', 'Putts', 'U&D', 'Bunker'];
+    const colX = [L, L + 22, L + 92, L + 112, L + 134, L + 154, L + 174];
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(110);
+    cols.forEach((c, i) => doc.text(c, colX[i], y));
+    doc.setTextColor(0); doc.setLineWidth(0.3); doc.setDrawColor(0);
+    y += 1.5; doc.line(L, y, R, y); y += 4;
+    doc.setFont('helvetica', 'normal');
+    s.rounds.forEach((r) => {
+      const cells = [String(r.date).slice(5), r.course, String(r.total), fmtTP(r.toPar), r.putts == null ? '-' : String(r.putts), r.ud, r.bunker];
+      cells.forEach((c, i) => doc.text(String(c), colX[i], y));
+      doc.setDrawColor(220); doc.line(L, y + 1.5, R, y + 1.5);
+      y += 6;
+    });
+    return y;
+  }
+
+  // ---- draw the team report page ----
+  function drawTeam(doc, summaries) {
+    const L = 15, R = 195, W = R - L;
+    let y = 20;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18); doc.setTextColor(0);
+    doc.text('Team report', L, y); y += 6;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(110);
+    doc.text(`${selectedSeason?.name ?? 'Season'} · Golf Team Tracker`, L, y);
+    doc.setTextColor(0); y += 4;
+    doc.setLineWidth(0.6); doc.line(L, y, R, y); y += 8;
+
+    for (const team of ['boys', 'girls']) {
+      const list = summaries.filter(s => s.gender === team).sort((a, b) => a.avg - b.avg);
+      if (list.length === 0) continue;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+      doc.text(team === 'boys' ? 'Boys' : 'Girls', L, y); y += 6;
+      const cols = ['#', 'Player', 'Avg', 'Best', 'Rds', 'U&D%', 'Sand%', 'Putts/rd', 'Blow-ups'];
+      const colX = [L, L + 10, L + 70, L + 88, L + 104, L + 118, L + 136, L + 156, L + 178];
+      doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(110);
+      cols.forEach((c, i) => doc.text(c, colX[i], y));
+      doc.setTextColor(0); doc.setLineWidth(0.3); doc.setDrawColor(0);
+      y += 1.5; doc.line(L, y, R, y); y += 4;
+      doc.setFont('helvetica', 'normal');
+      list.forEach((s, i) => {
+        const cells = [String(i + 1), s.name, String(s.avg), fmtTP(s.bestToPar), String(s.nRounds),
+          s.udPct == null ? '-' : String(s.udPct), s.sandPct == null ? '-' : String(s.sandPct),
+          s.puttsRd == null ? '-' : String(s.puttsRd), String(s.blowups)];
+        cells.forEach((c, j) => doc.text(String(c), colX[j], y));
+        doc.setDrawColor(220); doc.line(L, y + 1.5, R, y + 1.5);
+        y += 6;
+      });
+      y += 8;
+    }
+    return y;
+  }
+
+  async function run(which) {
+    if (!seasonId) { setError('Pick a season first.'); return; }
+    setBusy(true); setError(''); setStatus('Loading…');
+    try {
+      const jsPDF = await loadJsPDF();
+      setStatus('Pulling data…');
+      const { players, sgByKey } = await gatherData();
+      const summaries = Object.values(players).map(p => summarize(p, sgByKey))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      if (summaries.length === 0) { setError('No data in this season yet.'); setBusy(false); setStatus(''); return; }
+
+      setStatus('Building PDF…');
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+      let first = true;
+      const newPage = () => { if (!first) doc.addPage(); first = false; };
+
+      const seasonTag = (selectedSeason?.name || 'season').replace(/[^a-z0-9]+/gi, '_');
+
+      if (which === 'team') {
+        newPage(); drawTeam(doc, summaries);
+        doc.save(`Team_report_${seasonTag}.pdf`);
+      } else if (which === 'one') {
+        const pl = Object.values(players).find(pp => pp.id === pickedPlayer);
+        const target = pl ? summaries.find(x => x.name === pl.name) : null;
+        if (!target) { setError('Could not find that player.'); setBusy(false); setStatus(''); return; }
+        newPage(); drawPlayer(doc, target);
+        doc.save(`${target.name.replace(/[^a-z0-9]+/gi, '_')}_${seasonTag}.pdf`);
+      } else { // all
+        newPage(); drawTeam(doc, summaries);
+        summaries.forEach((s) => { newPage(); drawPlayer(doc, s); });
+        doc.save(`Season_reports_${seasonTag}.pdf`);
+      }
+      setStatus('Done — check your downloads.');
+      setTimeout(() => setStatus(''), 4000);
+    } catch (err) {
+      setError(err.message || 'PDF export failed.'); setStatus('');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>PDF reports</h2>
+      <p className="muted" style={{ marginBottom: 10 }}>
+        Printable season reports for {selectedSeason?.name ?? 'this season'}: a
+        team page with standings, plus a one-page report per player with their
+        scoring trend, short game, and round-by-round results.
+      </p>
+      {error && <div className="error">{error}</div>}
+      {status && <div className="success">{status}</div>}
+
+      <button onClick={() => run('all')} disabled={busy}>
+        {busy ? 'Working…' : 'Team + all players (one PDF)'}
+      </button>
+      <div className="spacer" />
+      <button className="secondary" onClick={() => run('team')} disabled={busy}>
+        Team report only
+      </button>
+
+      <div className="spacer" />
+      <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12, marginTop: 6 }}>
+        <label>One player</label>
+        <select value={pickedPlayer} onChange={(e) => setPickedPlayer(e.target.value)}>
+          <option value="all" disabled>Choose a player…</option>
+          {players.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        <div className="spacer" />
+        <button
+          className="secondary"
+          onClick={() => run('one')}
+          disabled={busy || pickedPlayer === 'all'}
+        >
+          Download this player's report
+        </button>
+      </div>
+
+      <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+        Downloads to your device. Needs an internet connection. Open in any PDF viewer or print.
+      </p>
+    </div>
   );
 }
