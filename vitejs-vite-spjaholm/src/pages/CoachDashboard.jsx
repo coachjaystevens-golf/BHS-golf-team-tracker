@@ -28,6 +28,7 @@ export default function CoachDashboard() {
             <button className={tab === 'courses' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('courses')}>Courses</button>
             <button className={tab === 'seasons' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('seasons')}>Seasons</button>
             <button className={tab === 'analysis' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('analysis')}>Analysis</button>
+            <button className={tab === 'drillfocus' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('drillfocus')}>Drills</button>
             <button className={tab === 'export' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setTab('export')}>Export</button>
           </div>
         )}
@@ -41,6 +42,7 @@ export default function CoachDashboard() {
       {tab === 'courses' && <Courses />}
       {tab === 'seasons' && <Seasons />}
       {tab === 'analysis' && <Analysis />}
+      {tab === 'drillfocus' && <DrillFocus />}
       {tab === 'export' && <ExportData />}
     </div>
   );
@@ -2090,6 +2092,149 @@ function ExportData() {
           it in Excel, Numbers, or Google Sheets.
         </p>
       </div>
+    </>
+  );
+}
+
+// ---- DrillFocus: which players are working on which drills ----
+// Two views, toggled: by player (each player's flagged drills) and by skill
+// area (who is working on each category). Reads player_drills joined to
+// drill_library and players; coaches can read all via RLS.
+function DrillFocus() {
+  const [view, setView] = useState('player'); // 'player' | 'skill'
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const CATEGORY_LABELS = {
+    putting: 'Putting',
+    chipping: 'Chipping',
+    pitching: 'Pitching',
+    bunker: 'Bunker',
+    full_swing: 'Full swing',
+    course_management: 'Course management',
+  };
+
+  async function load() {
+    setLoading(true);
+    setError('');
+    const { data, error: e } = await supabase
+      .from('player_drills')
+      .select('drill_id, player_id, players ( id, full_name, gender ), drill_library ( title, skill_category, item_type )')
+      .order('created_at', { ascending: false });
+    if (e) { setError(e.message); setLoading(false); return; }
+    setRows(data ?? []);
+    setLoading(false);
+  }
+  useEffect(() => { load(); }, []);
+
+  if (loading) return <p className="muted">Loading focus areas…</p>;
+
+  // build both groupings from the same rows
+  // by player: { player_id: { name, gender, drills: [{title, category}] } }
+  const byPlayer = {};
+  // by skill: { category: [{ player, title }] }
+  const bySkill = {};
+
+  for (const r of rows) {
+    const pid = r.player_id;
+    const name = r.players?.full_name ?? 'Player';
+    const gender = r.players?.gender ?? '';
+    const title = r.drill_library?.title ?? 'Drill';
+    const cat = r.drill_library?.skill_category ?? 'other';
+
+    if (!byPlayer[pid]) byPlayer[pid] = { name, gender, drills: [] };
+    byPlayer[pid].drills.push({ title, cat });
+
+    if (!bySkill[cat]) bySkill[cat] = [];
+    bySkill[cat].push({ name, title });
+  }
+
+  const playerList = Object.values(byPlayer).sort((a, b) => a.name.localeCompare(b.name));
+  const skillCats = Object.keys(bySkill).sort();
+
+  const ViewBtn = ({ active, onClick, children }) => (
+    <button
+      onClick={onClick}
+      className={active ? '' : 'secondary'}
+      style={{ width: 'auto', minHeight: 34, fontSize: 13, padding: '0 14px' }}
+    >{children}</button>
+  );
+
+  return (
+    <>
+      <div className="card">
+        <h2>Drill focus</h2>
+        <p className="muted" style={{ marginBottom: 8 }}>
+          What each player has flagged as "working on this" in the drill
+          library. Use it to see focus areas and spot who needs a nudge.
+        </p>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <ViewBtn active={view === 'player'} onClick={() => setView('player')}>By player</ViewBtn>
+          <ViewBtn active={view === 'skill'} onClick={() => setView('skill')}>By skill area</ViewBtn>
+        </div>
+        <div className="spacer" />
+        <button className="secondary" onClick={load}>↻ Refresh</button>
+      </div>
+
+      {error && <div className="error">{error}</div>}
+
+      {rows.length === 0 && (
+        <div className="card">
+          <p className="muted" style={{ margin: 0 }}>
+            No players have flagged any drills yet. When a player taps "Working
+            on this" in their Drills tab, it shows up here.
+          </p>
+        </div>
+      )}
+
+      {/* BY PLAYER */}
+      {view === 'player' && playerList.map((p) => (
+        <div key={p.name} className="card">
+          <div className="row-between">
+            <strong>{p.name}</strong>
+            <span className="muted" style={{ fontSize: 13 }}>
+              {p.drills.length} {p.drills.length === 1 ? 'drill' : 'drills'}
+            </span>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            {p.drills.map((d, i) => (
+              <div
+                key={i}
+                className="row-between"
+                style={{ padding: '6px 0', borderBottom: '1px solid var(--line)' }}
+              >
+                <span style={{ fontSize: 14 }}>{d.title}</span>
+                <span className="chip even">{CATEGORY_LABELS[d.cat] ?? d.cat}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* BY SKILL */}
+      {view === 'skill' && skillCats.map((cat) => (
+        <div key={cat} className="card">
+          <div className="row-between">
+            <strong>{CATEGORY_LABELS[cat] ?? cat}</strong>
+            <span className="muted" style={{ fontSize: 13 }}>
+              {bySkill[cat].length} {bySkill[cat].length === 1 ? 'entry' : 'entries'}
+            </span>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            {bySkill[cat].map((e, i) => (
+              <div
+                key={i}
+                className="row-between"
+                style={{ padding: '6px 0', borderBottom: '1px solid var(--line)' }}
+              >
+                <span style={{ fontSize: 14 }}>{e.name}</span>
+                <span className="muted" style={{ fontSize: 13 }}>{e.title}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </>
   );
 }
