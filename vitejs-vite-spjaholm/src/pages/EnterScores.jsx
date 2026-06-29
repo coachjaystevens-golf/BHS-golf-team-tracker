@@ -25,6 +25,15 @@ export default function EnterScores() {
   const [coachNote, setCoachNote] = useState(null); // { id, body, acknowledged }
   const [pending, setPending] = useState(0); // scores waiting to sync
 
+  // ↓ up/down — short-game stats for this round (made + attempts)
+  const [stats, setStats] = useState({
+    up_down_made: 0,
+    up_down_attempts: 0,
+    bunker_made: 0,
+    bunker_attempts: 0,
+  });
+  const [statsSaved, setStatsSaved] = useState(false);
+
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -67,6 +76,15 @@ export default function EnterScores() {
           .eq('player_id', p.id)
           .maybeSingle();
         if (cmt) setComment(cmt.body);
+
+        // ↓ up/down — load any existing stats row for this player+round
+        const { data: rs } = await supabase
+          .from('round_stats')
+          .select('up_down_made, up_down_attempts, bunker_made, bunker_attempts')
+          .eq('round_id', roundId)
+          .eq('player_id', p.id)
+          .maybeSingle();
+        if (rs) setStats(rs);
       }
 
       // coach's pre-round note for this round (not player-specific)
@@ -134,6 +152,59 @@ export default function EnterScores() {
       const next = cur === null || cur === undefined ? true : cur === true ? false : null;
       return { ...prev, [hole]: { ...getHole(hole), ...prev[hole], [field]: next } };
     });
+  }
+
+  // ↓ up/down — adjust a stat with sensible clamping. Made never exceeds
+  // attempts; bumping made up also bumps attempts if needed. Bunker made/
+  // attempts are kept at or below the up-and-down figures, since a bunker
+  // save is a subset of an up-and-down.
+  function adjustStat(field, delta) {
+    setStats((prev) => {
+      const next = { ...prev };
+      const v = Math.max(0, (prev[field] ?? 0) + delta);
+      next[field] = v;
+
+      // made can't exceed attempts (raise attempts to match)
+      if (field === 'up_down_made' && next.up_down_made > next.up_down_attempts) {
+        next.up_down_attempts = next.up_down_made;
+      }
+      if (field === 'bunker_made' && next.bunker_made > next.bunker_attempts) {
+        next.bunker_attempts = next.bunker_made;
+      }
+      // attempts can't drop below made (lower made to match)
+      if (field === 'up_down_attempts' && next.up_down_attempts < next.up_down_made) {
+        next.up_down_made = next.up_down_attempts;
+      }
+      if (field === 'bunker_attempts' && next.bunker_attempts < next.bunker_made) {
+        next.bunker_made = next.bunker_attempts;
+      }
+      return next;
+    });
+  }
+
+  // ↓ up/down — upsert the stats row for this player+round
+  async function saveStats() {
+    if (!playerId) {
+      setError('You are not linked to the roster yet. Ask your coach to add you.');
+      return;
+    }
+    const { error } = await supabase
+      .from('round_stats')
+      .upsert(
+        {
+          round_id: roundId,
+          player_id: playerId,
+          up_down_made: stats.up_down_made,
+          up_down_attempts: stats.up_down_attempts,
+          bunker_made: stats.bunker_made,
+          bunker_attempts: stats.bunker_attempts,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'round_id,player_id' }
+      );
+    if (error) { setError(error.message); return; }
+    setStatsSaved(true);
+    setTimeout(() => setStatsSaved(false), 1500);
   }
 
   async function saveHole(hole) {
@@ -250,6 +321,11 @@ export default function EnterScores() {
     : startHole === 10 && endHole === 18 ? 'Back 9'
     : `${endHole - startHole + 1} holes`;
 
+  // ↓ up/down — percentage helper for the live readout
+  const pct = (made, att) => (att > 0 ? Math.round((made / att) * 100) : null);
+  const upDownPct = pct(stats.up_down_made, stats.up_down_attempts);
+  const bunkerPct = pct(stats.bunker_made, stats.bunker_attempts);
+
   // small toggle button helper
   const ToggleBtn = ({ value, onClick, label }) => {
     const bg = value === true ? 'var(--green-500)' : value === false ? 'var(--flag)' : 'var(--white)';
@@ -263,6 +339,33 @@ export default function EnterScores() {
       >{text}</button>
     );
   };
+
+  // ↓ up/down — a made/attempts tile built from your existing stepper pattern
+  const StatTile = ({ title, hint, madeField, attField, made, att, percent }) => (
+    <div className="card" style={{ padding: 14 }}>
+      <div className="row-between" style={{ marginBottom: 4 }}>
+        <span className="hole-num">{title}</span>
+        <div className="chip even">{percent === null ? '—' : `${percent}%`}</div>
+      </div>
+      <p className="muted" style={{ fontSize: 13, marginTop: 0, marginBottom: 10 }}>{hint}</p>
+      <div className="row-between" style={{ marginBottom: 8 }}>
+        <span className="muted" style={{ width: 90 }}>Made</span>
+        <div className="stepper">
+          <button className="secondary" onClick={() => adjustStat(madeField, -1)}>−</button>
+          <span className="val">{made}</span>
+          <button className="secondary" onClick={() => adjustStat(madeField, +1)}>+</button>
+        </div>
+      </div>
+      <div className="row-between">
+        <span className="muted" style={{ width: 90 }}>Attempts</span>
+        <div className="stepper">
+          <button className="secondary" onClick={() => adjustStat(attField, -1)}>−</button>
+          <span className="val">{att}</span>
+          <button className="secondary" onClick={() => adjustStat(attField, +1)}>+</button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="content">
@@ -377,6 +480,43 @@ export default function EnterScores() {
           </div>
         );
       })}
+
+      {/* ↓ up/down — end-of-round short-game panel */}
+      {playerId && (
+        <div className="card">
+          <h2>Short game</h2>
+          <p className="muted" style={{ marginBottom: 12 }}>
+            After the round, log how you did around the greens. An up &amp; down
+            is getting in with two shots or fewer from off the green. A bunker
+            save is an up &amp; down from a greenside bunker (so every bunker
+            save is also an up &amp; down).
+          </p>
+
+          <StatTile
+            title="Up &amp; downs"
+            hint="Made the up &amp; down out of how many times you had the chance."
+            madeField="up_down_made"
+            attField="up_down_attempts"
+            made={stats.up_down_made}
+            att={stats.up_down_attempts}
+            percent={upDownPct}
+          />
+
+          <StatTile
+            title="Bunker saves"
+            hint="Saved from a greenside bunker out of how many you were in."
+            madeField="bunker_made"
+            attField="bunker_attempts"
+            made={stats.bunker_made}
+            att={stats.bunker_attempts}
+            percent={bunkerPct}
+          />
+
+          {statsSaved && <div className="success">Short game saved</div>}
+          <div className="spacer" />
+          <button onClick={saveStats}>Save short game</button>
+        </div>
+      )}
 
       {playerId && (
         <div className="card">
