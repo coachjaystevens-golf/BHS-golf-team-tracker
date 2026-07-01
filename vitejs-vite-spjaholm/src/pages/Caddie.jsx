@@ -24,6 +24,7 @@ export default function Caddie() {
   const [courses, setCourses] = useState([]);
   const [courseId, setCourseId] = useState('');
   const [coords, setCoords] = useState({}); // hole_number -> {front_lat,...,center_lat,...}
+  const [hazards, setHazards] = useState({}); // hole_number -> { carry:{...}, aim:{...} }
   const [loading, setLoading] = useState(true);
   const [clubs, setClubs] = useState([]); // player's bag for suggestions
 
@@ -78,7 +79,22 @@ export default function Caddie() {
     (data ?? []).forEach((r) => { map[r.hole_number] = r; });
     setCoords(map);
   }
-  useEffect(() => { loadCoords(courseId); }, [courseId]);
+
+  async function loadHazards(cid) {
+    if (!cid) return;
+    const { data } = await supabase
+      .from('hole_hazards')
+      .select('hole_number, hazard_type, label, front_lat, front_lng, back_lat, back_lng')
+      .eq('course_id', cid);
+    const map = {};
+    (data ?? []).forEach((r) => {
+      if (!map[r.hole_number]) map[r.hole_number] = {};
+      map[r.hole_number][r.hazard_type] = r;
+    });
+    setHazards(map);
+  }
+
+  useEffect(() => { loadCoords(courseId); loadHazards(courseId); }, [courseId]);
 
   if (loading) return <div className="content"><p className="muted">Loading…</p></div>;
 
@@ -145,6 +161,15 @@ export default function Caddie() {
         const hasAny = c.front_lat != null || c.center_lat != null;
         const toFront = distTo(c.front_lat, c.front_lng);
         const toCenter = distTo(c.center_lat, c.center_lng);
+
+        // hazards for this hole
+        const carry = hazards[hole]?.carry ?? {};
+        const aim = hazards[hole]?.aim ?? {};
+        const toWater = distTo(carry.front_lat, carry.front_lng); // near edge
+        const toClear = distTo(carry.back_lat, carry.back_lng);   // far edge (carry)
+        const toAim = distTo(aim.front_lat, aim.front_lng);
+        const hasHazardLine = toWater != null || toClear != null || toAim != null;
+
         return (
           <div key={hole} className="card" style={{ padding: 14 }}>
             <div className="row-between">
@@ -178,6 +203,47 @@ export default function Caddie() {
                   );
                 })()}
               </>
+            )}
+
+            {/* Hazard readout — only renders on holes with captured hazards.
+                Holes without hazards show nothing here (blank, not zero). */}
+            {hasHazardLine && (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: '8px 10px',
+                  borderRadius: 8,
+                  background: '#eaf2fb',
+                }}
+              >
+                {(toWater != null || toClear != null) && (
+                  <div style={{ fontSize: 13 }}>
+                    <span style={{ marginRight: 4 }}>💧</span>
+                    {toWater != null && (
+                      <>
+                        <strong>{toWater} yds</strong>
+                        <span className="muted"> to water</span>
+                      </>
+                    )}
+                    {toWater != null && toClear != null && (
+                      <span className="muted"> · </span>
+                    )}
+                    {toClear != null && (
+                      <>
+                        <strong>{toClear} yds</strong>
+                        <span className="muted"> to carry it</span>
+                      </>
+                    )}
+                  </div>
+                )}
+                {toAim != null && (
+                  <div style={{ fontSize: 13, marginTop: (toWater != null || toClear != null) ? 4 : 0 }}>
+                    <span style={{ marginRight: 4 }}>🎯</span>
+                    <strong>{toAim} yds</strong>
+                    <span className="muted"> to {aim.label ? aim.label.toLowerCase() : 'aim point'}</span>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         );
