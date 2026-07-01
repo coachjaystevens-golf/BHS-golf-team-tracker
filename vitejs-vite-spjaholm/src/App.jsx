@@ -9,6 +9,7 @@ import EnterScores from './pages/EnterScores.jsx';
 import MyStats from './pages/MyStats.jsx';
 import CoachDashboard from './pages/CoachDashboard.jsx';
 import CaptureCourse from './pages/CaptureCourse.jsx';
+import CaptureHazards from './pages/CaptureHazards.jsx';
 import LiveRound from './pages/LiveRound.jsx';
 import Caddie from './pages/Caddie.jsx';
 import AddCourse from './pages/AddCourse.jsx';
@@ -85,6 +86,10 @@ function Shell() {
           path="/capture"
           element={isCaptureHelper ? <CaptureCourse /> : <Navigate to="/" />}
         />
+        <Route
+          path="/capture-hazards"
+          element={isCaptureHelper ? <CaptureHazards /> : <Navigate to="/" />}
+        />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
 
@@ -98,6 +103,7 @@ function Shell() {
         >
           <NavLink to="/add-course" onClick={closeMore}>+ Course</NavLink>
           {isCaptureHelper && <NavLink to="/capture" onClick={closeMore}>Capture</NavLink>}
+          {isCaptureHelper && <NavLink to="/capture-hazards" onClick={closeMore}>Hazards</NavLink>}
           {isCoach && <NavLink to="/live" onClick={closeMore}>Live</NavLink>}
           {isCoach && <NavLink to="/coach" onClick={closeMore}>Coach</NavLink>}
           <a onClick={() => { closeMore(); signOut(); }} style={{ cursor: 'pointer' }}>Sign out</a>
