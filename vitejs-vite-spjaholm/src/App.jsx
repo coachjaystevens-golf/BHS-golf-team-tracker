@@ -93,24 +93,47 @@ function Shell() {
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
 
-      {/* expanded "More" sheet — reuses the bottom-nav look, lifted above
-          the bar with a divider tint so it reads as its own row. Inline
-          styles keep it self-contained (no App.css change needed). */}
+      {/* expanded "More" sheet — pinned ABOVE the main bar with fixed
+          positioning + high z-index so its links are always tappable, even on
+          tall scrolling pages like the capture screens. A full-screen backdrop
+          sits behind it to catch outside taps and close the menu. */}
       {moreOpen && (
-        <nav
-          className="bottom-nav"
-          style={{ borderTop: '1px solid var(--line)', background: 'var(--green-100)' }}
-        >
-          <NavLink to="/add-course" onClick={closeMore}>+ Course</NavLink>
-          {isCaptureHelper && <NavLink to="/capture" onClick={closeMore}>Capture</NavLink>}
-          {isCaptureHelper && <NavLink to="/capture-hazards" onClick={closeMore}>Hazards</NavLink>}
-          {isCoach && <NavLink to="/live" onClick={closeMore}>Live</NavLink>}
-          {isCoach && <NavLink to="/coach" onClick={closeMore}>Coach</NavLink>}
-          <a onClick={() => { closeMore(); signOut(); }} style={{ cursor: 'pointer' }}>Sign out</a>
-        </nav>
+        <>
+          <div
+            onClick={closeMore}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 999,
+              background: 'transparent',
+            }}
+          />
+          <nav
+            className="bottom-nav"
+            style={{
+              position: 'fixed',
+              left: 0,
+              right: 0,
+              bottom: 56,
+              zIndex: 1000,
+              borderTop: '1px solid var(--line)',
+              background: 'var(--green-100)',
+            }}
+          >
+            <NavLink to="/add-course" onClick={closeMore}>+ Course</NavLink>
+            {isCaptureHelper && <NavLink to="/capture" onClick={closeMore}>Capture</NavLink>}
+            {isCaptureHelper && <NavLink to="/capture-hazards" onClick={closeMore}>Hazards</NavLink>}
+            {isCoach && <NavLink to="/live" onClick={closeMore}>Live</NavLink>}
+            {isCoach && <NavLink to="/coach" onClick={closeMore}>Coach</NavLink>}
+            <a onClick={() => { closeMore(); signOut(); }} style={{ cursor: 'pointer' }}>Sign out</a>
+          </nav>
+        </>
       )}
 
-      <nav className="bottom-nav">
+      <nav
+        className="bottom-nav"
+        style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 1000 }}
+      >
         <NavLink to="/rounds" end onClick={closeMore}>Rounds</NavLink>
         <NavLink to="/stats" onClick={closeMore}>My Stats</NavLink>
         <NavLink to="/drills" onClick={closeMore}>Drills</NavLink>
