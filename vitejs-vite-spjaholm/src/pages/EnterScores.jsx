@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../AuthContext.jsx';
 import { toPar, formatToPar, roundTotal } from '../lib/scoring.js';
+import { yardsBetween } from '../lib/caddieMath.js';
 import { enqueueScore, flushQueue, onReconnect, pendingCount, isOnline, trySaveScore } from '../lib/offlineQueue.js';
 
 export default function EnterScores() {
@@ -24,6 +25,14 @@ export default function EnterScores() {
   const [deleting, setDeleting] = useState(false);
   const [coachNote, setCoachNote] = useState(null); // { id, body, acknowledged }
   const [pending, setPending] = useState(0); // scores waiting to sync
+
+  // --- Yardages (live GPS distances) ---
+  const [showYardages, setShowYardages] = useState(false);
+  const [pos, setPos] = useState(null);      // {lat,lng,acc}
+  const [gpsErr, setGpsErr] = useState('');
+  const watchId = useRef(null);
+  const [coords, setCoords] = useState({});   // hole_number -> green coords
+  const [hazards, setHazards] = useState({}); // hole_number -> { carry:{...}, aim:{...} }
 
   // ↓ up/down — short-game stats for this round (made + attempts)
   const [stats, setStats] = useState({
@@ -95,9 +104,56 @@ export default function EnterScores() {
         .maybeSingle();
       if (note) setCoachNote(note);
 
+      // Load green + hazard coordinates for this round's course, so the
+      // Yardages readout can compute live distances per hole.
+      if (r.course_id) {
+        const { data: cData } = await supabase
+          .from('hole_coordinates')
+          .select('hole_number, front_lat, front_lng, center_lat, center_lng')
+          .eq('course_id', r.course_id);
+        const cMap = {};
+        (cData ?? []).forEach((row) => { cMap[row.hole_number] = row; });
+        setCoords(cMap);
+
+        const { data: hData } = await supabase
+          .from('hole_hazards')
+          .select('hole_number, hazard_type, label, front_lat, front_lng, back_lat, back_lng')
+          .eq('course_id', r.course_id);
+        const hMap = {};
+        (hData ?? []).forEach((row) => {
+          if (!hMap[row.hole_number]) hMap[row.hole_number] = {};
+          hMap[row.hole_number][row.hazard_type] = row;
+        });
+        setHazards(hMap);
+      }
+
       setLoading(false);
     })();
   }, [roundId, user.id]);
+
+  // Start/stop the GPS watcher only while the Yardages readout is on, so the
+  // scoring screen doesn't drain GPS for players who don't use it.
+  useEffect(() => {
+    if (!showYardages) {
+      if (watchId.current != null) {
+        navigator.geolocation.clearWatch(watchId.current);
+        watchId.current = null;
+      }
+      return;
+    }
+    if (!navigator.geolocation) { setGpsErr('This device has no GPS.'); return; }
+    watchId.current = navigator.geolocation.watchPosition(
+      (p) => { setPos({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }); setGpsErr(''); },
+      (e) => setGpsErr(e.message || 'Location unavailable. Allow location access and try outside.'),
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
+    );
+    return () => { if (watchId.current != null) { navigator.geolocation.clearWatch(watchId.current); watchId.current = null; } };
+  }, [showYardages]);
+
+  const distTo = (lat, lng) => {
+    if (!pos || lat == null || lng == null) return null;
+    return Math.round(yardsBetween(pos.lat, pos.lng, lat, lng));
+  };
 
   async function acknowledgeNote() {
     if (!coachNote) return;
@@ -387,6 +443,26 @@ export default function EnterScores() {
           strokes and move on. Fairway/green: tap once for hit (✓), again for
           miss (✗), again to clear.
         </p>
+
+        {/* Yardages toggle — turns on a live per-hole distance readout. Only
+            runs GPS while on, so it doesn't drain battery during scoring. */}
+        <div className="spacer" />
+        <button
+          className="secondary"
+          style={{ width: '100%' }}
+          onClick={() => setShowYardages((v) => !v)}
+        >
+          📍 {showYardages ? 'Hide yardages' : 'Show yardages'}
+        </button>
+        {showYardages && (
+          <p className="muted" style={{ marginTop: 8, marginBottom: 0, fontSize: 13 }}>
+            {gpsErr
+              ? gpsErr
+              : pos
+                ? `GPS live · ±${Math.round(pos.acc)} m — distances show on each hole below.`
+                : 'Getting your location…'}
+          </p>
+        )}
       </div>
 
       {coachNote && (
@@ -436,6 +512,19 @@ export default function EnterScores() {
         const chipClass =
           diff === null ? 'even' : diff < 0 ? 'under' : diff > 0 ? 'over' : 'even';
         const isPar3 = holePar === 3;
+
+        // live yardages for this hole (only when readout is on)
+        const gc = coords[hole] ?? {};
+        const carry = hazards[hole]?.carry ?? {};
+        const aim = hazards[hole]?.aim ?? {};
+        const toCenter = distTo(gc.center_lat, gc.center_lng);
+        const toFront = distTo(gc.front_lat, gc.front_lng);
+        const toWater = distTo(carry.front_lat, carry.front_lng);
+        const toClear = distTo(carry.back_lat, carry.back_lng);
+        const toAim = distTo(aim.front_lat, aim.front_lng);
+        const holeMapped = gc.center_lat != null || gc.front_lat != null;
+        const hasHazard = toWater != null || toClear != null || toAim != null;
+
         return (
           <div key={hole} className="card" style={{ padding: 14 }}>
             <div className="row-between" style={{ marginBottom: 8 }}>
@@ -447,6 +536,45 @@ export default function EnterScores() {
                 {diff === null ? '—' : formatToPar(diff)}
               </div>
             </div>
+
+            {/* Yardages readout for this hole */}
+            {showYardages && (
+              <div style={{ marginBottom: 10 }}>
+                {holeMapped ? (
+                  <div style={{ padding: '8px 10px', borderRadius: 8, background: 'var(--green-100)' }}>
+                    <span style={{ fontSize: 13 }}>
+                      {toCenter != null && (<><strong>{toCenter}</strong><span className="muted"> center</span></>)}
+                      {toCenter != null && toFront != null && <span className="muted"> · </span>}
+                      {toFront != null && (<><strong>{toFront}</strong><span className="muted"> front</span></>)}
+                      {(toCenter != null || toFront != null) && <span className="muted"> yds</span>}
+                    </span>
+                    {hasHazard && (
+                      <div style={{ fontSize: 13, marginTop: 4 }}>
+                        {(toWater != null || toClear != null) && (
+                          <span>
+                            <span style={{ marginRight: 4 }}>💧</span>
+                            {toWater != null && (<><strong>{toWater}</strong><span className="muted"> to water</span></>)}
+                            {toWater != null && toClear != null && <span className="muted"> · </span>}
+                            {toClear != null && (<><strong>{toClear}</strong><span className="muted"> carry</span></>)}
+                          </span>
+                        )}
+                        {toAim != null && (
+                          <span style={{ marginLeft: (toWater != null || toClear != null) ? 8 : 0 }}>
+                            <span style={{ marginRight: 4 }}>🎯</span>
+                            <strong>{toAim}</strong>
+                            <span className="muted"> {aim.label ? aim.label.toLowerCase() : 'aim'}</span>
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                    Hole not mapped for yardages.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* strokes */}
             <div className="row-between" style={{ marginBottom: 8 }}>
