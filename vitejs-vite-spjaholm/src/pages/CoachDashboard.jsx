@@ -171,7 +171,173 @@ function Home({ onNavigate }) {
         <NavCard title="Goals" sub="Practice targets" onClick={() => onNavigate('goals')} />
         <NavCard title="Roster" sub="Players & join codes" onClick={() => onNavigate('roster')} />
       </div>
+
+      {/* weekly practice / play summary */}
+      <WeeklyActivity onNavigate={onNavigate} />
     </>
+  );
+}
+
+
+// ---- WeeklyActivity: collapsible "who's been out this past week" ----
+function WeeklyActivity({ onNavigate }) {
+  const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState([]); // [{ player_id, name, count, outings:[{date,course,type}] }]
+  const [expanded, setExpanded] = useState(null); // player_id whose detail is shown
+
+  async function load() {
+    setLoading(true);
+    // window: last 7 days (inclusive of today)
+    const since = new Date();
+    since.setDate(since.getDate() - 6);
+    const sinceStr = since.toISOString().slice(0, 10);
+
+    // rounds in the window
+    const { data: weekRounds } = await supabase
+      .from('rounds')
+      .select('id, played_on, type, courses ( name )')
+      .gte('played_on', sinceStr);
+
+    if (!weekRounds || weekRounds.length === 0) {
+      setRows([]); setLoaded(true); setLoading(false); return;
+    }
+
+    const roundIds = weekRounds.map((r) => r.id);
+    const roundMeta = {};
+    weekRounds.forEach((r) => {
+      roundMeta[r.id] = { date: r.played_on, course: r.courses?.name ?? 'Course', type: r.type ?? 'round' };
+    });
+
+    // only count rounds a player actually logged holes in
+    const { data: scores } = await supabase
+      .from('scores')
+      .select('round_id, player_id')
+      .in('round_id', roundIds);
+
+    if (!scores || scores.length === 0) {
+      setRows([]); setLoaded(true); setLoading(false); return;
+    }
+
+    const playerIds = [...new Set(scores.map((s) => s.player_id))];
+    const { data: players } = await supabase
+      .from('players')
+      .select('id, full_name')
+      .in('id', playerIds);
+    const nameById = {};
+    (players ?? []).forEach((p) => { nameById[p.id] = p.full_name; });
+
+    // one outing = one (player, round) pair that has scores
+    const seen = new Set(); // player_id|round_id
+    const byPlayer = {};
+    scores.forEach((s) => {
+      const key = `${s.player_id}|${s.round_id}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      if (!byPlayer[s.player_id]) {
+        byPlayer[s.player_id] = {
+          player_id: s.player_id,
+          name: nameById[s.player_id] ?? 'Player',
+          outings: [],
+        };
+      }
+      const m = roundMeta[s.round_id];
+      if (m) byPlayer[s.player_id].outings.push(m);
+    });
+
+    const list = Object.values(byPlayer).map((p) => {
+      p.outings.sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+      return { ...p, count: p.outings.length };
+    });
+    // most active first, then alphabetical
+    list.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
+    setRows(list);
+    setLoaded(true);
+    setLoading(false);
+  }
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && !loaded) load();
+  }
+
+  const totalOutings = rows.reduce((n, r) => n + r.count, 0);
+
+  return (
+    <div className="card" style={{ marginTop: 12 }}>
+      <div
+        className="row-between"
+        style={{ cursor: 'pointer', alignItems: 'center' }}
+        onClick={toggle}
+      >
+        <div>
+          <strong>📅 This past week</strong>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Who's been out on the course (last 7 days)
+          </div>
+        </div>
+        <span className="muted">{open ? '▲' : '▾'}</span>
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {loading && <p className="muted" style={{ margin: 0 }}>Loading…</p>}
+
+          {!loading && rows.length === 0 && (
+            <p className="muted" style={{ margin: 0 }}>
+              No rounds logged in the last 7 days.
+            </p>
+          )}
+
+          {!loading && rows.length > 0 && (
+            <>
+              <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+                {rows.length} player(s) · {totalOutings} outing(s). Tap a name for detail.
+              </p>
+              {rows.map((r) => (
+                <div key={r.player_id} style={{ borderBottom: '1px solid var(--line)' }}>
+                  <div
+                    className="row-between"
+                    style={{ padding: '8px 0', cursor: 'pointer', alignItems: 'center' }}
+                    onClick={() => setExpanded(expanded === r.player_id ? null : r.player_id)}
+                  >
+                    <strong>{r.name}</strong>
+                    <span
+                      className="pill"
+                      style={{
+                        background: 'var(--green-100)',
+                        borderRadius: 999,
+                        padding: '2px 10px',
+                        fontSize: 13,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {r.count}× {expanded === r.player_id ? '▲' : '▾'}
+                    </span>
+                  </div>
+                  {expanded === r.player_id && (
+                    <div style={{ paddingBottom: 8 }}>
+                      {r.outings.map((o, i) => (
+                        <div
+                          key={i}
+                          className="muted"
+                          style={{ fontSize: 13, padding: '3px 0 3px 8px' }}
+                        >
+                          {o.date} · {o.course} · {o.type}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
