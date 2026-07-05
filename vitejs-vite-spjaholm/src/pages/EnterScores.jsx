@@ -25,6 +25,7 @@ export default function EnterScores() {
   const [deleting, setDeleting] = useState(false);
   const [coachNote, setCoachNote] = useState(null); // { id, body, acknowledged }
   const [pending, setPending] = useState(0); // scores waiting to sync
+  const [notInLineup, setNotInLineup] = useState(false); // match round, player not designated
 
   // --- Yardages (live GPS distances) ---
   const [showYardages, setShowYardages] = useState(false);
@@ -62,6 +63,17 @@ export default function EnterScores() {
         .maybeSingle();
       if (p) {
         setPlayerId(p.id);
+
+        // For matches with a designated lineup, warn a non-lineup player.
+        if (r.type === 'match') {
+          const { data: lu } = await supabase
+            .from('round_lineup')
+            .select('player_id')
+            .eq('round_id', roundId);
+          if (lu && lu.length > 0 && !lu.some((x) => x.player_id === p.id)) {
+            setNotInLineup(true);
+          }
+        }
         const { data: existing } = await supabase
           .from('scores')
           .select('hole_number, strokes, putts, fairway_hit, green_in_regulation')
@@ -428,6 +440,20 @@ export default function EnterScores() {
       <div className="card">
         <p className="eyebrow">{round.type} · {round.played_on} · {rangeLabel}</p>
         <h2>{round.courses?.name}</h2>
+        {notInLineup && (
+          <div
+            className="muted"
+            style={{
+              background: 'var(--green-100, #e4f3e7)',
+              border: '1px solid var(--line)',
+              borderRadius: 8, padding: '8px 10px', fontSize: 13, marginBottom: 8,
+            }}
+          >
+            You're not in this match's lineup, so your scores won't appear on
+            the team board or count toward the team total. Check with your coach
+            if that's a surprise.
+          </div>
+        )}
         <div className="stat-grid">
           <div className="stat-box">
             <div className="n">{total || '—'}</div>
