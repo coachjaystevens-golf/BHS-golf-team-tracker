@@ -32,7 +32,7 @@ export default function LiveRound() {
     // 1. Today's in-progress rounds
     const { data: liveRounds, error: re } = await supabase
       .from('rounds')
-      .select('id, start_hole, end_hole, courses ( name, par_per_hole )')
+      .select('id, type, boys_count, girls_count, start_hole, end_hole, courses ( name, par_per_hole )')
       .eq('status', 'in_progress')
       .eq('played_on', todayStr());
     if (re) { setError(re.message); setLoading(false); return; }
@@ -46,6 +46,17 @@ export default function LiveRound() {
     const roundIds = liveRounds.map((r) => r.id);
     const roundById = {};
     liveRounds.forEach((r) => { roundById[r.id] = r; });
+
+    // Lineups for these rounds (matches only have them). Map: roundId -> Set(playerId)
+    const { data: lineupRows } = await supabase
+      .from('round_lineup')
+      .select('round_id, player_id')
+      .in('round_id', roundIds);
+    const lineupByRound = {};
+    (lineupRows ?? []).forEach((l) => {
+      if (!lineupByRound[l.round_id]) lineupByRound[l.round_id] = new Set();
+      lineupByRound[l.round_id].add(l.player_id);
+    });
 
     // 2. All scores under those rounds
     const { data: scores, error: se } = await supabase
@@ -73,8 +84,14 @@ export default function LiveRound() {
     // 4. Group scores by player (a player is in exactly one live round today)
     const byPlayer = {};
     scores.forEach((s) => {
+      const rnd = roundById[s.round_id];
+      const lineupSet = lineupByRound[s.round_id];
+      const isMatch = rnd?.type === 'match';
+      const hasLineup = isMatch && lineupSet && lineupSet.size > 0;
+      // In a match with a designated lineup, only show designated players.
+      if (hasLineup && !lineupSet.has(s.player_id)) return;
+
       if (!byPlayer[s.player_id]) {
-        const rnd = roundById[s.round_id];
         const player = playerById[s.player_id];
         byPlayer[s.player_id] = {
           player_id: s.player_id,
@@ -83,6 +100,9 @@ export default function LiveRound() {
           gender: player?.gender ?? null,
           course: rnd?.courses?.name ?? 'Course',
           par: rnd?.courses?.par_per_hole ?? [],
+          is_match: isMatch,
+          boys_count: rnd?.boys_count ?? null,
+          girls_count: rnd?.girls_count ?? null,
           holes: [],
         };
       }
@@ -148,6 +168,22 @@ export default function LiveRound() {
     return counted ? diff : null;
   };
 
+  // Compute counted team total: take players with a finished-enough score,
+  // sort by to-par ascending, count the best `n`, drop the rest.
+  // Returns { total, countedIds:Set, n } or null if not a counted match group.
+  const teamTotal = (players, n) => {
+    if (!n || players.length === 0) return null;
+    const scored = players
+      .map((p) => ({ id: p.player_id, tp: playerToPar(p) }))
+      .filter((x) => x.tp != null)
+      .sort((a, b) => a.tp - b.tp);
+    if (scored.length === 0) return null;
+    const counted = scored.slice(0, n);
+    const countedIds = new Set(counted.map((x) => x.id));
+    const total = counted.reduce((sum, x) => sum + x.tp, 0);
+    return { total, countedIds, n, have: scored.length };
+  };
+
   // color a single hole cell based on the active view
   const cellStyle = (h) => {
     const base = {
@@ -180,15 +216,33 @@ export default function LiveRound() {
     return h.fairway_hit == null ? '·' : h.fairway_hit ? '✓' : '✗';
   };
 
-  const PlayerCard = ({ p }) => {
+  const PlayerCard = ({ p, dropped }) => {
     const tp = playerToPar(p);
     const alert = hasPuttAlert(p.holes);
     const lastHole = p.holes.length ? p.holes[p.holes.length - 1].hole_number : '—';
     return (
-      <div className="card" style={{ padding: 12, border: alert ? '2px solid var(--flag)' : undefined }}>
+      <div
+        className="card"
+        style={{
+          padding: 12,
+          border: alert ? '2px solid var(--flag)' : undefined,
+          opacity: dropped ? 0.55 : 1,
+        }}
+      >
         <div className="row-between" style={{ marginBottom: 6 }}>
           <div>
             <strong>{p.full_name}</strong>
+            {dropped && (
+              <span
+                className="muted"
+                style={{
+                  fontSize: 11, fontWeight: 700, marginLeft: 6,
+                  textTransform: 'uppercase', letterSpacing: 0.3,
+                }}
+              >
+                drop
+              </span>
+            )}
             <div className="muted" style={{ fontSize: 12 }}>{p.course} · thru {p.holes.length}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -243,12 +297,40 @@ export default function LiveRound() {
     );
   };
 
-  const Group = ({ title, players }) => {
+  const Group = ({ title, players, count }) => {
     if (players.length === 0) return null;
+    const tt = teamTotal(players, count);
+    // Order the board best-to-worst when we're counting, so drops sit at the bottom.
+    const ordered = tt
+      ? [...players].sort((a, b) => {
+          const ap = playerToPar(a), bp = playerToPar(b);
+          if (ap == null) return 1;
+          if (bp == null) return -1;
+          return ap - bp;
+        })
+      : players;
     return (
       <>
-        <p className="eyebrow">{title}</p>
-        {players.map((p) => <PlayerCard key={p.player_id} p={p} />)}
+        <div className="row-between" style={{ alignItems: 'baseline', marginTop: 4 }}>
+          <p className="eyebrow" style={{ margin: 0 }}>{title}</p>
+          {tt && (
+            <div style={{ textAlign: 'right' }}>
+              <span style={{ fontWeight: 800, fontSize: 15 }}>
+                {formatToPar(tt.total)}
+              </span>
+              <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                top {tt.n}{tt.have < tt.n ? ` (only ${tt.have} in)` : ''}
+              </span>
+            </div>
+          )}
+        </div>
+        {ordered.map((p) => (
+          <PlayerCard
+            key={p.player_id}
+            p={p}
+            dropped={tt ? !tt.countedIds.has(p.player_id) : false}
+          />
+        ))}
       </>
     );
   };
@@ -288,9 +370,18 @@ export default function LiveRound() {
         </div>
       ) : (
         <>
-          <Group title="Boys" players={boys} />
-          <Group title="Girls" players={girls} />
-          <Group title="Players" players={other} />
+          {/* Only count when this is a match group (players carry the rule). */}
+          <Group
+            title="Boys"
+            players={boys}
+            count={boys.find((p) => p.is_match)?.boys_count ?? null}
+          />
+          <Group
+            title="Girls"
+            players={girls}
+            count={girls.find((p) => p.is_match)?.girls_count ?? null}
+          />
+          <Group title="Players" players={other} count={null} />
         </>
       )}
     </div>
