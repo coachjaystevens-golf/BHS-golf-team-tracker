@@ -19,6 +19,11 @@ export default function Rounds() {
   const [playedOn, setPlayedOn] = useState(
     new Date().toISOString().slice(0, 10)
   );
+  // match lineup + counting rules
+  const [allPlayers, setAllPlayers] = useState([]);       // {id, full_name, gender}
+  const [lineup, setLineup] = useState({});               // { [playerId]: true }
+  const [boysCount, setBoysCount] = useState(4);          // scores that count
+  const [girlsCount, setGirlsCount] = useState(2);
 
   async function load() {
     if (!seasonId) { setRounds([]); setLoading(false); return; }
@@ -36,6 +41,16 @@ export default function Rounds() {
     setRounds(r ?? []);
     setCourses(c ?? []);
     if (c?.length && !courseId) setCourseId(c[0].id);
+
+    // players available for match lineups (coach only)
+    if (isCoach) {
+      const { data: pl } = await supabase
+        .from('players')
+        .select('id, full_name, gender')
+        .order('gender')
+        .order('full_name');
+      setAllPlayers(pl ?? []);
+    }
     setLoading(false);
   }
 
@@ -70,10 +85,24 @@ export default function Rounds() {
         season_id: activeSeason.id,
         start_hole: startHole,
         end_hole: endHole,
+        boys_count: roundType === 'match' ? Number(boysCount) : null,
+        girls_count: roundType === 'match' ? Number(girlsCount) : null,
       })
       .select()
       .single();
     if (error) { setError(error.message); return; }
+
+    // For matches, save the designated lineup.
+    if (roundType === 'match') {
+      const rows = allPlayers
+        .filter((p) => lineup[p.id])
+        .map((p) => ({ round_id: data.id, player_id: p.id, team: p.gender }));
+      if (rows.length > 0) {
+        const { error: le } = await supabase.from('round_lineup').insert(rows);
+        if (le) { setError('Round created, but lineup failed to save: ' + le.message); return; }
+      }
+    }
+
     setShowForm(false);
     navigate(`/round/${data.id}`);
   }
@@ -165,6 +194,18 @@ export default function Rounds() {
                   </>
                 )}
 
+                {isCoach && type === 'match' && (
+                  <LineupPicker
+                    allPlayers={allPlayers}
+                    lineup={lineup}
+                    setLineup={setLineup}
+                    boysCount={boysCount}
+                    setBoysCount={setBoysCount}
+                    girlsCount={girlsCount}
+                    setGirlsCount={setGirlsCount}
+                  />
+                )}
+
                 <label>Date</label>
                 <input type="date" value={playedOn}
                   onChange={(e) => setPlayedOn(e.target.value)} />
@@ -229,6 +270,92 @@ export default function Rounds() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+
+// ---- LineupPicker: coach designates who's in a match + counting rules ----
+function LineupPicker({
+  allPlayers, lineup, setLineup,
+  boysCount, setBoysCount, girlsCount, setGirlsCount,
+}) {
+  const boys = allPlayers.filter((p) => p.gender === 'boys');
+  const girls = allPlayers.filter((p) => p.gender === 'girls');
+  const boysPicked = boys.filter((p) => lineup[p.id]).length;
+  const girlsPicked = girls.filter((p) => lineup[p.id]).length;
+
+  const toggle = (id) =>
+    setLineup((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  const Team = ({ title, players, picked, count, setCount }) => (
+    <div style={{ marginTop: 12 }}>
+      <div className="row-between" style={{ alignItems: 'center' }}>
+        <strong style={{ fontSize: 14 }}>{title}</strong>
+        <span className="muted" style={{ fontSize: 12 }}>{picked} playing</span>
+      </div>
+      {players.length === 0 && (
+        <p className="muted" style={{ fontSize: 12, margin: '4px 0' }}>
+          No players on this team yet.
+        </p>
+      )}
+      {players.map((p) => (
+        <label
+          key={p.id}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '6px 0', fontWeight: 400, cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={!!lineup[p.id]}
+            onChange={() => toggle(p.id)}
+            style={{ width: 18, height: 18 }}
+          />
+          {p.full_name}
+        </label>
+      ))}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+        <span className="muted" style={{ fontSize: 13 }}>Scores that count:</span>
+        <input
+          type="number"
+          min="1"
+          value={count}
+          onChange={(e) => setCount(e.target.value)}
+          style={{ width: 60 }}
+        />
+        <span className="muted" style={{ fontSize: 12 }}>
+          (top {count} of {picked || '—'})
+        </span>
+      </div>
+    </div>
+  );
+
+  return (
+    <div
+      className="card"
+      style={{ marginTop: 12, background: 'var(--green-100, #e4f3e7)' }}
+    >
+      <strong style={{ fontSize: 14 }}>Match lineup</strong>
+      <p className="muted" style={{ fontSize: 12, margin: '2px 0 0' }}>
+        Pick who's playing. The live board and team totals use only these
+        players; the top scores you set below count toward the team.
+      </p>
+      <Team
+        title="Boys"
+        players={boys}
+        picked={boysPicked}
+        count={boysCount}
+        setCount={setBoysCount}
+      />
+      <Team
+        title="Girls"
+        players={girls}
+        picked={girlsPicked}
+        count={girlsCount}
+        setCount={setGirlsCount}
+      />
     </div>
   );
 }
