@@ -772,13 +772,12 @@ function Roster() {
   const [players, setPlayers] = useState([]);
   const [name, setName] = useState('');
   const [gender, setGender] = useState('boys');
-  const [grade, setGrade] = useState('');
   const [error, setError] = useState('');
 
   async function load() {
     const { data } = await supabase
       .from('players')
-      .select('id, full_name, gender, grade, user_id, join_code, capture_helper')
+      .select('id, full_name, gender, user_id, join_code, capture_helper')
       .order('gender').order('full_name');
     setPlayers(data ?? []);
   }
@@ -790,10 +789,9 @@ function Roster() {
     const { error } = await supabase.from('players').insert({
       full_name: name.trim(),
       gender,
-      grade: grade ? Number(grade) : null,
     });
     if (error) { setError(error.message); return; }
-    setName(''); setGrade(''); load();
+    setName(''); load();
   }
 
   const boys = players.filter((p) => p.gender === 'boys');
@@ -815,8 +813,6 @@ function Roster() {
           <option value="boys">Boys</option>
           <option value="girls">Girls</option>
         </select>
-        <label>Grade (optional)</label>
-        <input type="number" value={grade} onChange={(e) => setGrade(e.target.value)} />
         <div className="spacer" />
         <button onClick={addPlayer}>Add to player list</button>
       </div>
