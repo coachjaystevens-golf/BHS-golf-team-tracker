@@ -47,6 +47,7 @@ export default function Rounds() {
       const { data: pl } = await supabase
         .from('players')
         .select('id, full_name, gender')
+        .eq('archived', false)
         .order('gender')
         .order('full_name');
       setAllPlayers(pl ?? []);
