@@ -770,6 +770,7 @@ function TeamCard({ title, data, list, par, onSaved, roundId }) {
 
 function Roster() {
   const [players, setPlayers] = useState([]);
+  const [archived, setArchived] = useState([]);
   const [name, setName] = useState('');
   const [gender, setGender] = useState('boys');
   const [error, setError] = useState('');
@@ -777,9 +778,11 @@ function Roster() {
   async function load() {
     const { data } = await supabase
       .from('players')
-      .select('id, full_name, gender, user_id, join_code, capture_helper')
+      .select('id, full_name, gender, user_id, join_code, capture_helper, archived')
       .order('gender').order('full_name');
-    setPlayers(data ?? []);
+    const all = data ?? [];
+    setPlayers(all.filter((p) => !p.archived));
+    setArchived(all.filter((p) => p.archived));
   }
   useEffect(() => { load(); }, []);
 
@@ -820,6 +823,8 @@ function Roster() {
       <RosterList title="All players · Boys" players={boys} onChange={load} />
       <RosterList title="All players · Girls" players={girls} onChange={load} />
 
+      <ArchivedPlayers players={archived} onChange={load} />
+
       <SeasonRoster allPlayers={players} />
     </>
   );
@@ -834,6 +839,14 @@ function RosterList({ title, players, onChange }) {
     if (onChange) onChange();
   }
 
+  async function archivePlayer(p) {
+    await supabase
+      .from('players')
+      .update({ archived: true, archived_at: new Date().toISOString() })
+      .eq('id', p.id);
+    if (onChange) onChange();
+  }
+
   return (
     <div className="card">
       <h2>{title} ({players.length})</h2>
@@ -842,7 +855,7 @@ function RosterList({ title, players, onChange }) {
       ) : (
         <table>
           <thead>
-            <tr><th>Name</th><th>Code</th><th>Linked?</th><th>Capture</th></tr>
+            <tr><th>Name</th><th>Code</th><th>Linked?</th><th>Capture</th><th></th></tr>
           </thead>
           <tbody>
             {players.map((p) => (
@@ -865,6 +878,9 @@ function RosterList({ title, players, onChange }) {
                     {p.capture_helper ? 'Helper ✓' : 'Make helper'}
                   </button>
                 </td>
+                <td>
+                  <ArchiveButton onArchive={() => archivePlayer(p)} name={p.full_name} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -872,9 +888,162 @@ function RosterList({ title, players, onChange }) {
       )}
       <p className="muted" style={{ marginTop: 8 }}>
         "Capture" lets a player help record green locations on the course.
-        Only flag players you trust to map accurately.
+        Only flag players you trust to map accurately. Archiving a player
+        keeps all their past scores but removes them from active rosters.
       </p>
     </div>
+  );
+}
+
+// small inline confirm so an accidental tap doesn't archive anyone
+function ArchiveButton({ onArchive, name }) {
+  const [confirm, setConfirm] = useState(false);
+  if (confirm) {
+    return (
+      <span style={{ display: 'inline-flex', gap: 4 }}>
+        <button
+          onClick={onArchive}
+          style={{ width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px', background: 'var(--flag)' }}
+        >
+          Archive
+        </button>
+        <button
+          className="secondary"
+          onClick={() => setConfirm(false)}
+          style={{ width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px' }}
+        >
+          Cancel
+        </button>
+      </span>
+    );
+  }
+  return (
+    <button
+      className="secondary"
+      onClick={() => setConfirm(true)}
+      style={{ width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px', color: 'var(--muted)' }}
+    >
+      Archive
+    </button>
+  );
+}
+
+// ---- Archived players: restore or permanently delete ----
+function ArchivedPlayers({ players, onChange }) {
+  const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState(null);
+
+  async function restore(p) {
+    setError('');
+    await supabase
+      .from('players')
+      .update({ archived: false, archived_at: null })
+      .eq('id', p.id);
+    if (onChange) onChange();
+  }
+
+  // Permanently delete a player and all their child records, in an
+  // order that won't trip foreign-key constraints. Irreversible.
+  async function hardDelete(p) {
+    setError('');
+    setBusyId(p.id);
+    const pid = p.id;
+    const childTables = [
+      'scores', 'round_stats', 'round_lineup', 'round_comments',
+      'player_clubs', 'player_drills', 'club_shots', 'season_players',
+    ];
+    for (const t of childTables) {
+      const { error: e } = await supabase.from(t).delete().eq('player_id', pid);
+      if (e) {
+        setError(`Couldn't clear ${t}: ${e.message}. Player not deleted.`);
+        setBusyId(null);
+        return;
+      }
+    }
+    const { error: pe } = await supabase.from('players').delete().eq('id', pid);
+    if (pe) { setError(pe.message); setBusyId(null); return; }
+    setBusyId(null);
+    if (onChange) onChange();
+  }
+
+  if (players.length === 0) return null;
+
+  return (
+    <div className="card" style={{ borderColor: 'var(--line)' }}>
+      <h2>Archived players ({players.length})</h2>
+      {error && <div className="error">{error}</div>}
+      <p className="muted" style={{ marginTop: 0 }}>
+        These players are off all active rosters but their past scores are
+        preserved. Restore anyone who returns. Permanent deletion erases the
+        player and every score, stat, and record tied to them — it can't be
+        undone.
+      </p>
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Team</th><th></th></tr>
+        </thead>
+        <tbody>
+          {players.map((p) => (
+            <tr key={p.id}>
+              <td>{p.full_name}</td>
+              <td style={{ textTransform: 'capitalize' }}>{p.gender}</td>
+              <td>
+                <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => restore(p)}
+                    style={{ width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px', background: 'var(--green-500)' }}
+                  >
+                    Restore
+                  </button>
+                  <DeleteButton
+                    name={p.full_name}
+                    busy={busyId === p.id}
+                    onDelete={() => hardDelete(p)}
+                  />
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Double-confirm permanent delete: two taps, second one warns explicitly.
+function DeleteButton({ name, onDelete, busy }) {
+  const [step, setStep] = useState(0); // 0 idle, 1 armed
+
+  if (busy) {
+    return <span className="muted" style={{ fontSize: 12 }}>Deleting…</span>;
+  }
+  if (step === 1) {
+    return (
+      <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+        <button
+          onClick={onDelete}
+          style={{ width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px', background: 'var(--flag)' }}
+        >
+          Delete forever
+        </button>
+        <button
+          className="secondary"
+          onClick={() => setStep(0)}
+          style={{ width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px' }}
+        >
+          Cancel
+        </button>
+      </span>
+    );
+  }
+  return (
+    <button
+      className="secondary"
+      onClick={() => setStep(1)}
+      style={{ width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px', color: 'var(--flag)', borderColor: 'var(--flag)' }}
+    >
+      Delete
+    </button>
   );
 }
 
