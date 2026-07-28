@@ -56,6 +56,11 @@ export default function EnterScores() {
       setRound(r);
       setPar(r.courses?.par_per_hole ?? []);
 
+      // Matches: turn the live yardage readout on automatically. Distance
+      // information is allowed in competition, so players shouldn't have to
+      // remember to switch it on. Practice rounds still default to off.
+      if (r.type === 'match') setShowYardages(true);
+
       const { data: p } = await supabase
         .from('players')
         .select('id')
