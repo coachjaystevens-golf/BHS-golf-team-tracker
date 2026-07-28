@@ -27,6 +27,10 @@ export default function Caddie() {
   const [hazards, setHazards] = useState({}); // hole_number -> { carry:{...}, aim:{...} }
   const [loading, setLoading] = useState(true);
   const [clubs, setClubs] = useState([]); // player's bag for suggestions
+  // True while this player has a match round in progress today. Club
+  // suggestions are hidden in that state — yardages are fine in competition,
+  // club advice is not.
+  const [inMatch, setInMatch] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -38,6 +42,25 @@ export default function Caddie() {
         .select('club, label, avg_yards, shot_count')
         .eq('player_id', p.id);
       setClubs(bag ?? []);
+
+      // Any match round still in progress today?
+      const today = new Date().toISOString().slice(0, 10);
+      const { data: liveMatches } = await supabase
+        .from('rounds')
+        .select('id')
+        .eq('type', 'match')
+        .eq('status', 'in_progress')
+        .eq('played_on', today);
+      if (!liveMatches || liveMatches.length === 0) { setInMatch(false); return; }
+
+      // Only lock the player if they're actually in one of those lineups.
+      // If a match was created without a lineup, lock everyone to be safe.
+      const { data: lu } = await supabase
+        .from('round_lineup')
+        .select('round_id, player_id')
+        .in('round_id', liveMatches.map((m) => m.id));
+      const hasLineup = (lu ?? []).length > 0;
+      setInMatch(!hasLineup || (lu ?? []).some((x) => x.player_id === p.id));
     })();
   }, [user.id]);
 
@@ -133,6 +156,15 @@ export default function Caddie() {
         </button>
       </div>
 
+      {inMatch && (
+        <div className="card" style={{ background: '#fff4e5', border: '2px solid var(--accent, #F54E1A)' }}>
+          <p style={{ margin: 0, fontSize: 13 }}>
+            <strong>Match in progress</strong> — club suggestions are turned off.
+            Distances are still live. Pick your own club.
+          </p>
+        </div>
+      )}
+
       {/* GPS status */}
       <div className="card" style={{ background: pos ? 'var(--green-100)' : '#f6dcd9' }}>
         {gpsErr ? (
@@ -189,6 +221,7 @@ export default function Caddie() {
                   </div>
                 </div>
                 {(() => {
+                  if (inMatch) return null;
                   if (toCenter == null || clubs.length === 0) return null;
                   const sug = suggestClub(toCenter, clubs);
                   if (!sug) return null;
