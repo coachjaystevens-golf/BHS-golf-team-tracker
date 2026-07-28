@@ -209,6 +209,23 @@ export default function LiveRound() {
       : { ...base, background: 'var(--flag)', color: 'var(--white)' };
   };
 
+  // Strokes for a hole, always shown regardless of the active view.
+  // Colored against par so the coach can scan the round at a glance.
+  const strokeStyle = (h, par) => {
+    const base = {
+      minWidth: 30, textAlign: 'center', padding: '2px 0', borderRadius: 6,
+      fontSize: 14, fontWeight: 700, lineHeight: 1.2,
+    };
+    if (h.strokes == null) return { ...base, color: 'var(--muted)' };
+    if (par == null) return { ...base, color: 'var(--ink)' };
+    const d = h.strokes - par;
+    if (d <= -2) return { ...base, color: 'var(--white)', background: '#8e44ad' };   // eagle+
+    if (d === -1) return { ...base, color: 'var(--white)', background: 'var(--green-500)' }; // birdie
+    if (d === 0) return { ...base, color: 'var(--ink)' };                             // par
+    if (d === 1) return { ...base, color: 'var(--ink)', background: '#f6dcd9' };      // bogey
+    return { ...base, color: 'var(--white)', background: 'var(--flag)' };             // double+
+  };
+
   // what text shows in a hole cell for the active view
   const cellText = (h) => {
     if (view === 'putts') return h.putts == null ? '·' : h.putts;
@@ -258,6 +275,9 @@ export default function LiveRound() {
           {p.holes.map((h) => (
             <div key={h.hole_number} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
               <div style={{ fontSize: 10, color: 'var(--muted)' }}>{h.hole_number}</div>
+              <div style={strokeStyle(h, p.par[h.hole_number - 1])}>
+                {h.strokes == null ? '·' : h.strokes}
+              </div>
               <div style={cellStyle(h)}>{cellText(h)}</div>
             </div>
           ))}
