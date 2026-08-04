@@ -16,6 +16,7 @@ import AddCourse from './pages/AddCourse.jsx';
 import ClubBag from './pages/ClubBag.jsx';
 import PracticeRound from './pages/PracticeRound.jsx';
 import Drills from './pages/Drills.jsx';
+import Challenge from './pages/Challenge.jsx';
 function Shell() {
   const { user, loading, isCoach, isLinked, isCaptureHelper, signOut, recovery } = useAuth();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -73,6 +74,8 @@ function Shell() {
         <Route path="/my-clubs" element={<ClubBag />} />
         <Route path="/practice" element={<PracticeRound />} />
         <Route path="/drills" element={<Drills />} />
+        <Route path="/challenge" element={<Challenge />} />
+        <Route path="/challenge/:sessionId" element={<Challenge />} />
         <Route path="/add-course" element={<AddCourse />} />
         <Route
           path="/coach"
@@ -120,6 +123,7 @@ function Shell() {
               background: 'var(--green-100)',
             }}
           >
+            <NavLink to="/challenge" onClick={closeMore}>Challenge</NavLink>
             <NavLink to="/add-course" onClick={closeMore}>+ Course</NavLink>
             {isCaptureHelper && <NavLink to="/capture" onClick={closeMore}>Capture</NavLink>}
             {isCaptureHelper && <NavLink to="/capture-hazards" onClick={closeMore}>Hazards</NavLink>}
