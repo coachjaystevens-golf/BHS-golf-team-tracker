@@ -20,6 +20,8 @@ function hasPuttAlert(holes) {
 export default function LiveRound() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // mode: 'board' = compact match scoreboard, 'detail' = hole-by-hole cards
+  const [mode, setMode] = useState('board');
   // view: which stat the grid colors by
   const [view, setView] = useState('putts'); // 'putts' | 'gir' | 'fairway'
   // which player's round is pending a force-close confirm
@@ -317,11 +319,48 @@ export default function LiveRound() {
     );
   };
 
+  // One line per player on the compact scoreboard.
+  const ScoreRow = ({ p, rank, counted, dropped }) => {
+    const tp = playerToPar(p);
+    const strokes = p.holes.reduce((s, h) => s + (h.strokes ?? 0), 0);
+    const lastHole = p.holes.length ? p.holes[p.holes.length - 1].hole_number : null;
+    return (
+      <div
+        className="row-between"
+        style={{
+          padding: '10px 2px',
+          borderTop: '1px solid var(--line)',
+          opacity: dropped ? 0.5 : 1,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <span className="muted" style={{ fontSize: 13, width: 18, textAlign: 'right' }}>{rank}</span>
+          <div style={{ minWidth: 0 }}>
+            <strong style={{ fontSize: 16 }}>{p.full_name}</strong>
+            {dropped && (
+              <span className="muted" style={{ fontSize: 10, fontWeight: 700, marginLeft: 6, textTransform: 'uppercase' }}>drop</span>
+            )}
+            <div className="muted" style={{ fontSize: 12 }}>
+              thru {p.holes.length}{lastHole ? ` · last hole ${lastHole}` : ''}
+            </div>
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontWeight: 800, fontSize: 20, color: counted ? 'var(--ink)' : undefined }}>
+            {tp == null ? '—' : formatToPar(tp)}
+          </div>
+          <div className="muted" style={{ fontSize: 11 }}>{strokes} strokes</div>
+        </div>
+      </div>
+    );
+  };
+
   const Group = ({ title, players, count }) => {
     if (players.length === 0) return null;
     const tt = teamTotal(players, count);
-    // Order the board best-to-worst when we're counting, so drops sit at the bottom.
-    const ordered = tt
+    // Order best-to-worst when counting, and always on the compact
+    // scoreboard — a leaderboard in alphabetical order isn't one.
+    const ordered = (tt || mode === 'board')
       ? [...players].sort((a, b) => {
           const ap = playerToPar(a), bp = playerToPar(b);
           if (ap == null) return 1;
@@ -335,7 +374,7 @@ export default function LiveRound() {
           <p className="eyebrow" style={{ margin: 0 }}>{title}</p>
           {tt && (
             <div style={{ textAlign: 'right' }}>
-              <span style={{ fontWeight: 800, fontSize: 15 }}>
+              <span style={{ fontWeight: 800, fontSize: mode === 'board' ? 20 : 15 }}>
                 {formatToPar(tt.total)}
               </span>
               <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
@@ -344,39 +383,69 @@ export default function LiveRound() {
             </div>
           )}
         </div>
-        {ordered.map((p) => (
-          <PlayerCard
-            key={p.player_id}
-            p={p}
-            dropped={tt ? !tt.countedIds.has(p.player_id) : false}
-          />
-        ))}
+        {mode === 'board' ? (
+          <div className="card" style={{ padding: '2px 12px' }}>
+            {ordered.map((p, i) => (
+              <ScoreRow
+                key={p.player_id}
+                p={p}
+                rank={i + 1}
+                counted={tt ? tt.countedIds.has(p.player_id) : true}
+                dropped={tt ? !tt.countedIds.has(p.player_id) : false}
+              />
+            ))}
+          </div>
+        ) : (
+          ordered.map((p) => (
+            <PlayerCard
+              key={p.player_id}
+              p={p}
+              dropped={tt ? !tt.countedIds.has(p.player_id) : false}
+            />
+          ))
+        )}
       </>
     );
   };
 
   return (
     <div className="content">
-      <div className="card">
-        <div className="row-between">
-          <h2 style={{ margin: 0 }}>Live Round</h2>
-          <button className="secondary" style={{ width: 'auto', padding: '0 10px' }} onClick={load}>↻</button>
+      {/* Sticky so the coach can flip views from anywhere on the page —
+          no scrolling back to the top mid-match. */}
+      <div
+        className="card"
+        style={{
+          position: 'sticky', top: 0, zIndex: 50,
+          padding: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+        }}
+      >
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            className={mode === 'board' ? '' : 'secondary'}
+            style={{ flex: 1, minHeight: 42, fontSize: 15, fontWeight: 700 }}
+            onClick={() => setMode('board')}
+          >Scoreboard</button>
+          <button
+            className={mode === 'detail' ? '' : 'secondary'}
+            style={{ flex: 1, minHeight: 42, fontSize: 15, fontWeight: 700 }}
+            onClick={() => setMode('detail')}
+          >Detail</button>
+          <button className="secondary" style={{ width: 'auto', padding: '0 12px' }} onClick={load}>↻</button>
         </div>
-        <p className="muted" style={{ marginTop: 6 }}>
-          Players who've posted at least one hole today. Updates live as scores come in.
-        </p>
-        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-          {['putts', 'gir', 'fairway'].map((v) => (
-            <button
-              key={v}
-              className={view === v ? '' : 'secondary'}
-              style={{ fontSize: 13, padding: '0 10px', textTransform: 'capitalize' }}
-              onClick={() => setView(v)}
-            >
-              {v === 'gir' ? 'Greens' : v === 'fairway' ? 'Fairways' : 'Putts'}
-            </button>
-          ))}
-        </div>
+        {mode === 'detail' && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            {['putts', 'gir', 'fairway'].map((v) => (
+              <button
+                key={v}
+                className={view === v ? '' : 'secondary'}
+                style={{ fontSize: 13, padding: '0 10px', textTransform: 'capitalize' }}
+                onClick={() => setView(v)}
+              >
+                {v === 'gir' ? 'Greens' : v === 'fairway' ? 'Fairways' : 'Putts'}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {error && <div className="error">{error}</div>}
