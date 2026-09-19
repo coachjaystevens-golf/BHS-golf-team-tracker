@@ -14,6 +14,10 @@ export default function EnterScores() {
   const [round, setRound] = useState(null);
   const [par, setPar] = useState([]);
   const [playerId, setPlayerId] = useState(null);
+  // coach score entry: the roster for the "Scoring for" picker, and which
+  // row (if any) is the signed-in user's own card
+  const [roster, setRoster] = useState([]);
+  const [ownPlayerId, setOwnPlayerId] = useState(null);
   // per-hole data: { [hole]: { strokes, putts, fairway, gir } }
   const [holeData, setHoleData] = useState({});
   const [loading, setLoading] = useState(true);
@@ -44,6 +48,60 @@ export default function EnterScores() {
   });
   const [statsSaved, setStatsSaved] = useState(false);
 
+  // Load one player's data for this round (scores, note, short-game stats).
+  // Used on first load for your own card, and by the coach picker to switch
+  // between players. Everything save-related keys off playerId, so switching
+  // the target here redirects every save to that player's card.
+  async function loadPlayerData(pid, roundType) {
+    setPlayerId(pid);
+    setNotInLineup(false);
+    setHoleData({});
+    setComment('');
+    setStats({ up_down_made: 0, up_down_attempts: 0, bunker_made: 0, bunker_attempts: 0 });
+
+    if (roundType === 'match') {
+      const { data: lu } = await supabase
+        .from('round_lineup')
+        .select('player_id')
+        .eq('round_id', roundId);
+      if (lu && lu.length > 0 && !lu.some((x) => x.player_id === pid)) {
+        setNotInLineup(true);
+      }
+    }
+
+    const { data: existing } = await supabase
+      .from('scores')
+      .select('hole_number, strokes, putts, fairway_hit, green_in_regulation')
+      .eq('round_id', roundId)
+      .eq('player_id', pid);
+    const map = {};
+    (existing ?? []).forEach((s) => {
+      map[s.hole_number] = {
+        strokes: s.strokes,
+        putts: s.putts ?? null,
+        fairway: s.fairway_hit ?? null,
+        gir: s.green_in_regulation ?? null,
+      };
+    });
+    setHoleData(map);
+
+    const { data: cmt } = await supabase
+      .from('round_comments')
+      .select('body')
+      .eq('round_id', roundId)
+      .eq('player_id', pid)
+      .maybeSingle();
+    setComment(cmt?.body ?? '');
+
+    const { data: rs } = await supabase
+      .from('round_stats')
+      .select('up_down_made, up_down_attempts, bunker_made, bunker_attempts')
+      .eq('round_id', roundId)
+      .eq('player_id', pid)
+      .maybeSingle();
+    if (rs) setStats(rs);
+  }
+
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -66,52 +124,30 @@ export default function EnterScores() {
         .select('id')
         .eq('user_id', user.id)
         .maybeSingle();
-      if (p) {
-        setPlayerId(p.id);
+      if (p) setOwnPlayerId(p.id);
 
-        // For matches with a designated lineup, warn a non-lineup player.
-        if (r.type === 'match') {
-          const { data: lu } = await supabase
-            .from('round_lineup')
-            .select('player_id')
-            .eq('round_id', roundId);
-          if (lu && lu.length > 0 && !lu.some((x) => x.player_id === p.id)) {
-            setNotInLineup(true);
-          }
+      // Coaches can score for anyone — load the roster for the picker,
+      // with match-lineup players floated to the top.
+      if (isCoach) {
+        const [{ data: all }, luRes] = await Promise.all([
+          supabase.from('players').select('id, full_name, archived').order('full_name'),
+          r.type === 'match'
+            ? supabase.from('round_lineup').select('player_id').eq('round_id', roundId)
+            : Promise.resolve({ data: null }),
+        ]);
+        const luSet = new Set((luRes?.data ?? []).map((x) => x.player_id));
+        const list = (all ?? [])
+          .filter((pl) => !pl.archived)
+          .map((pl) => ({ id: pl.id, full_name: pl.full_name, inLineup: luSet.has(pl.id) }));
+        if (luSet.size) {
+          list.sort((a, b) => (b.inLineup - a.inLineup) || a.full_name.localeCompare(b.full_name));
         }
-        const { data: existing } = await supabase
-          .from('scores')
-          .select('hole_number, strokes, putts, fairway_hit, green_in_regulation')
-          .eq('round_id', roundId)
-          .eq('player_id', p.id);
-        const map = {};
-        (existing ?? []).forEach((s) => {
-          map[s.hole_number] = {
-            strokes: s.strokes,
-            putts: s.putts ?? null,
-            fairway: s.fairway_hit ?? null,
-            gir: s.green_in_regulation ?? null,
-          };
-        });
-        setHoleData(map);
-
-        const { data: cmt } = await supabase
-          .from('round_comments')
-          .select('body')
-          .eq('round_id', roundId)
-          .eq('player_id', p.id)
-          .maybeSingle();
-        if (cmt) setComment(cmt.body);
-
-        // ↓ up/down — load any existing stats row for this player+round
-        const { data: rs } = await supabase
-          .from('round_stats')
-          .select('up_down_made, up_down_attempts, bunker_made, bunker_attempts')
-          .eq('round_id', roundId)
-          .eq('player_id', p.id)
-          .maybeSingle();
-        if (rs) setStats(rs);
+        setRoster(list);
       }
+
+      // Default target: your own card if you have one. A coach without a
+      // roster row picks a player from the dropdown instead.
+      if (p) await loadPlayerData(p.id, r.type);
 
       // coach's pre-round note for this round (not player-specific)
       const { data: note } = await supabase
@@ -258,7 +294,7 @@ export default function EnterScores() {
   // ↓ up/down — upsert the stats row for this player+round
   async function saveStats() {
     if (!playerId) {
-      setError('You are not linked to the roster yet. Ask your coach to add you.');
+      setError(isCoach ? 'Pick a player in the Scoring for box first.' : 'You are not linked to the roster yet. Ask your coach to add you.');
       return;
     }
     const { error } = await supabase
@@ -282,7 +318,7 @@ export default function EnterScores() {
 
   async function saveHole(hole) {
     if (!playerId) {
-      setError('You are not linked to the roster yet. Ask your coach to add you.');
+      setError(isCoach ? 'Pick a player in the Scoring for box first.' : 'You are not linked to the roster yet. Ask your coach to add you.');
       return;
     }
     const h = getHole(hole);
@@ -352,7 +388,7 @@ export default function EnterScores() {
 
   async function saveComment() {
     if (!playerId) {
-      setError('You are not linked to the roster yet. Ask your coach to add you.');
+      setError(isCoach ? 'Pick a player in the Scoring for box first.' : 'You are not linked to the roster yet. Ask your coach to add you.');
       return;
     }
     if (!comment.trim()) return;
@@ -528,10 +564,36 @@ export default function EnterScores() {
           </p>
         </div>
       )}
+      {isCoach && roster.length > 0 && (
+        <div className="card" style={{ background: 'var(--green-100)' }}>
+          <label>Scoring for</label>
+          <select
+            value={playerId ?? ''}
+            onChange={(e) => e.target.value && loadPlayerData(e.target.value, round?.type)}
+          >
+            <option value="" disabled>Choose a player…</option>
+            {roster.map((pl) => (
+              <option key={pl.id} value={pl.id}>
+                {pl.full_name}
+                {pl.inLineup ? ' • lineup' : ''}
+                {pl.id === ownPlayerId ? ' (you)' : ''}
+              </option>
+            ))}
+          </select>
+          {playerId && (
+            <p className="muted" style={{ fontSize: 12, marginTop: 6, marginBottom: 0 }}>
+              Every hole, note, and stat below saves to this player's card.
+              Holes already saved stay saved when you switch players.
+            </p>
+          )}
+        </div>
+      )}
+
       {!playerId && (
         <div className="error">
-          You aren't linked to the roster yet, so scores can't save.
-          Ask your coach to add you on the Coach tab.
+          {isCoach
+            ? 'Pick a player above to enter their scores.'
+            : "You aren't linked to the roster yet, so scores can't save. Ask your coach to add you on the Coach tab."}
         </div>
       )}
 
