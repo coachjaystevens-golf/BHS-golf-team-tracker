@@ -117,23 +117,53 @@ function Shell() {
             }}
           />
           <nav
-            className="bottom-nav"
             style={{
               position: 'fixed',
-              left: 0,
-              right: 0,
-              bottom: 56,
+              right: 8,
+              bottom: 64,
               zIndex: 1000,
-              borderTop: '1px solid var(--line)',
-              background: 'var(--green-100)',
+              minWidth: 180,
+              background: 'var(--white)',
+              border: '1px solid var(--line)',
+              borderRadius: 12,
+              boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
+              padding: '6px 0',
+              display: 'flex',
+              flexDirection: 'column',
             }}
           >
-            <NavLink to="/add-course" onClick={closeMore}>+ Course</NavLink>
-            {isCaptureHelper && <NavLink to="/capture" onClick={closeMore}>Capture</NavLink>}
-            {isCaptureHelper && <NavLink to="/capture-hazards" onClick={closeMore}>Hazards</NavLink>}
-            {isCoach && <NavLink to="/live" onClick={closeMore}>Live</NavLink>}
-            {isCoach && <NavLink to="/coach" onClick={closeMore}>Coach</NavLink>}
-            <a onClick={() => { closeMore(); signOut(); }} style={{ cursor: 'pointer' }}>Sign out</a>
+            {[
+              /* Coach: primary tabs live on the main bar, so More is a true
+                 overflow. "+ Course" is omitted for coaches — Coach tab's
+                 Manage → Courses section already has the add-course form. */
+              ...(isCoach ? [
+                { to: '/stats', label: 'My Stats' },
+                { to: '/caddie', label: 'Caddie' },
+              ] : [
+                { to: '/add-course', label: '+ Add a course' },
+              ]),
+              ...(isCaptureHelper ? [
+                { to: '/capture', label: 'Capture course' },
+                { to: '/capture-hazards', label: 'Capture hazards' },
+              ] : []),
+            ].map((l) => (
+              <NavLink
+                key={l.to}
+                to={l.to}
+                onClick={closeMore}
+                style={{
+                  padding: '13px 18px', fontSize: 15, textDecoration: 'none',
+                  color: 'var(--ink)', borderBottom: '1px solid var(--line)',
+                }}
+              >{l.label}</NavLink>
+            ))}
+            <a
+              onClick={() => { closeMore(); signOut(); }}
+              style={{
+                padding: '13px 18px', fontSize: 15, cursor: 'pointer',
+                color: 'var(--muted)',
+              }}
+            >Sign out</a>
           </nav>
         </>
       )}
@@ -142,10 +172,21 @@ function Shell() {
         className="bottom-nav"
         style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 1000 }}
       >
-        <NavLink to="/rounds" end onClick={closeMore}>Rounds</NavLink>
-        <NavLink to="/stats" onClick={closeMore}>My Stats</NavLink>
-        <NavLink to="/training" onClick={closeMore}>Practice</NavLink>
-        <NavLink to="/caddie" onClick={closeMore}>Caddie</NavLink>
+        {isCoach ? (
+          <>
+            <NavLink to="/coach" onClick={closeMore}>Coach</NavLink>
+            <NavLink to="/live" onClick={closeMore}>Live</NavLink>
+            <NavLink to="/rounds" end onClick={closeMore}>Rounds</NavLink>
+            <NavLink to="/training" onClick={closeMore}>Practice</NavLink>
+          </>
+        ) : (
+          <>
+            <NavLink to="/rounds" end onClick={closeMore}>Rounds</NavLink>
+            <NavLink to="/stats" onClick={closeMore}>My Stats</NavLink>
+            <NavLink to="/training" onClick={closeMore}>Practice</NavLink>
+            <NavLink to="/caddie" onClick={closeMore}>Caddie</NavLink>
+          </>
+        )}
         <a
           onClick={() => setMoreOpen((v) => !v)}
           style={{ cursor: 'pointer', fontWeight: moreOpen ? 700 : undefined }}
