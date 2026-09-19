@@ -18,6 +18,7 @@ import PracticeRound from './pages/PracticeRound.jsx';
 import Drills from './pages/Drills.jsx';
 import Challenge from './pages/Challenge.jsx';
 import PuttingDrills from './pages/PuttingDrills.jsx';
+import Practice from './pages/Practice.jsx';
 function Shell() {
   const { user, loading, isCoach, isLinked, isCaptureHelper, signOut, recovery } = useAuth();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -79,6 +80,7 @@ function Shell() {
         <Route path="/challenge/:sessionId" element={<Challenge />} />
         <Route path="/putting" element={<PuttingDrills />} />
         <Route path="/putting/:sessionId" element={<PuttingDrills />} />
+        <Route path="/training" element={<Practice />} />
         <Route path="/add-course" element={<AddCourse />} />
         <Route
           path="/coach"
@@ -126,8 +128,6 @@ function Shell() {
               background: 'var(--green-100)',
             }}
           >
-            <NavLink to="/challenge" onClick={closeMore}>Challenge</NavLink>
-            <NavLink to="/putting" onClick={closeMore}>Putting</NavLink>
             <NavLink to="/add-course" onClick={closeMore}>+ Course</NavLink>
             {isCaptureHelper && <NavLink to="/capture" onClick={closeMore}>Capture</NavLink>}
             {isCaptureHelper && <NavLink to="/capture-hazards" onClick={closeMore}>Hazards</NavLink>}
@@ -144,7 +144,7 @@ function Shell() {
       >
         <NavLink to="/rounds" end onClick={closeMore}>Rounds</NavLink>
         <NavLink to="/stats" onClick={closeMore}>My Stats</NavLink>
-        <NavLink to="/drills" onClick={closeMore}>Drills</NavLink>
+        <NavLink to="/training" onClick={closeMore}>Practice</NavLink>
         <NavLink to="/caddie" onClick={closeMore}>Caddie</NavLink>
         <a
           onClick={() => setMoreOpen((v) => !v)}
