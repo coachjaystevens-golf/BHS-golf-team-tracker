@@ -196,18 +196,18 @@ export default function LiveRound() {
       if (h.putts == null) return { ...base, background: 'var(--white)', color: 'var(--muted)', border: '1px solid var(--line)' };
       if (h.putts >= 3) return { ...base, background: 'var(--flag)', color: 'var(--white)' };
       if (h.putts === 2) return { ...base, background: 'var(--green-100, #e4f3e7)', color: 'var(--ink)' };
-      return { ...base, background: 'var(--green-500)', color: 'var(--white)' }; // 0-1 putts, great
+      return { ...base, background: 'var(--good)', color: 'var(--white)' }; // 0-1 putts, great
     }
     if (view === 'gir') {
       if (h.green_in_regulation == null) return { ...base, background: 'var(--white)', color: 'var(--muted)', border: '1px solid var(--line)' };
       return h.green_in_regulation
-        ? { ...base, background: 'var(--green-500)', color: 'var(--white)' }
+        ? { ...base, background: 'var(--good)', color: 'var(--white)' }
         : { ...base, background: 'var(--flag)', color: 'var(--white)' };
     }
     // fairway
     if (h.fairway_hit == null) return { ...base, background: 'var(--white)', color: 'var(--muted)', border: '1px solid var(--line)' };
     return h.fairway_hit
-      ? { ...base, background: 'var(--green-500)', color: 'var(--white)' }
+      ? { ...base, background: 'var(--good)', color: 'var(--white)' }
       : { ...base, background: 'var(--flag)', color: 'var(--white)' };
   };
 
@@ -222,7 +222,7 @@ export default function LiveRound() {
     if (par == null) return { ...base, color: 'var(--ink)' };
     const d = h.strokes - par;
     if (d <= -2) return { ...base, color: 'var(--white)', background: '#8e44ad' };   // eagle+
-    if (d === -1) return { ...base, color: 'var(--white)', background: 'var(--green-500)' }; // birdie
+    if (d === -1) return { ...base, color: 'var(--white)', background: 'var(--good)' }; // birdie
     if (d === 0) return { ...base, color: 'var(--ink)' };                             // par
     if (d === 1) return { ...base, color: 'var(--ink)', background: '#f6dcd9' };      // bogey
     return { ...base, color: 'var(--white)', background: 'var(--flag)' };             // double+
