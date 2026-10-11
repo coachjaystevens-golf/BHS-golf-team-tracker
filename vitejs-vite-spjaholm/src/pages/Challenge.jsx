@@ -669,7 +669,7 @@ function ChallengePlay({ sessionId }) {
                   : d === 1 ? '#f6dcd9'
                   : 'var(--flag)';
                 const color = n === hole
-                  ? 'var(--white)'
+                  ? 'var(--on-accent)'
                   : d == null ? 'var(--muted)'
                   : d < 0 || d > 1 ? 'var(--white)'
                   : 'var(--ink)';
@@ -747,7 +747,7 @@ function ChallengePlay({ sessionId }) {
                 onClick={toggleGreen}
                 style={{
                   width: '100%', minHeight: 44, fontSize: 14,
-                  background: h.hit_green === true ? 'var(--green-500)'
+                  background: h.hit_green === true ? 'var(--good)'
                     : h.hit_green === false ? 'var(--flag)' : 'var(--white)',
                   color: h.hit_green == null ? 'var(--muted)' : 'var(--white)',
                   border: h.hit_green == null ? '1.5px solid var(--line)' : 'none',
