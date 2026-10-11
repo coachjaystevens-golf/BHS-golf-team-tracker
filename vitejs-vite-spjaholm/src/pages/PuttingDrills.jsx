@@ -581,10 +581,10 @@ function PuttingPlay({ sessionId }) {
                         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                         fontSize: 11, fontWeight: 700,
                         background: a.outcome === 'holed'
-                          ? 'var(--green-500)'
+                          ? 'var(--good)'
                           : a.outcome === 'zone' ? 'var(--green-100)' : 'var(--white)',
                         color: a.outcome === 'holed' ? 'var(--white)' : 'var(--green-700)',
-                        border: '1.5px solid var(--green-500)',
+                        border: '1.5px solid var(--good)',
                       }}
                     >
                       {a.outcome === 'holed' ? '●' : a.outcome === 'zone' ? '◐' : '○'}
