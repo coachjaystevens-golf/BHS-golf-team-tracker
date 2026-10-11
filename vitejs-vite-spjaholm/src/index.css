@@ -2,6 +2,10 @@
   --green-900: #123524;
   --green-700: #1b5e3a;
   --green-500: #2e8b57;
+  --green-200: #d9ecd9;
+  --good:      #2e8b57;  /* good results; theme.js keeps it distinct from --flag */
+  --good-ink:  #1b5e3a;  /* text on good-result tints */
+  --on-accent: #ffffff;  /* text on --green-500 buttons */
   --green-100: #e6f0e9;
   --cream:     #f7f5ef;
   --flag:      #c0392b;
@@ -69,7 +73,7 @@ body {
 button, .btn {
   font-family: var(--font-body); font-size: 16px; min-height: var(--tap);
   border: none; border-radius: 10px; background: var(--green-500);
-  color: var(--white); font-weight: 600; cursor: pointer; padding: 0 18px;
+  color: var(--on-accent); font-weight: 600; cursor: pointer; padding: 0 18px;
   width: 100%; transition: background 0.15s ease;
 }
 button:active, .btn:active { background: var(--green-700); }
@@ -96,7 +100,7 @@ input:focus, select:focus { outline: none; border-color: var(--green-500); }
 .stepper .val { min-width: 40px; text-align: center; font-size: 22px; font-weight: 700; color: var(--ink); }
 
 .chip { font-size: 11px; padding: 3px 7px; border-radius: 12px; font-weight: 700; text-align: center; }
-.chip.under { background: #d9ecd9; color: #1b5e3a; }
+.chip.under { background: var(--green-200); color: var(--good-ink); }
 .chip.even  { background: var(--green-100); color: var(--green-900); }
 .chip.over  { background: #f6dcd9; color: var(--flag); }
 
@@ -113,7 +117,7 @@ tr.dropped td { color: var(--muted); text-decoration: line-through; }
 
 .muted { color: var(--muted); font-size: 14px; }
 .error { background: #f6dcd9; color: var(--flag); padding: 12px; border-radius: 10px; font-size: 14px; margin: 10px 0; }
-.success { background: #d9ecd9; color: var(--green-700); padding: 12px; border-radius: 10px; font-size: 14px; margin: 10px 0; }
+.success { background: var(--green-200); color: var(--good-ink); padding: 12px; border-radius: 10px; font-size: 14px; margin: 10px 0; }
 .center { text-align: center; }
 .spacer { height: 10px; }
 .row-between { display: flex; justify-content: space-between; align-items: center; }
