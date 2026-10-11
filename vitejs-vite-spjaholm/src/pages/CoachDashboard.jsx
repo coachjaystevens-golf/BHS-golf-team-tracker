@@ -871,7 +871,7 @@ function RosterList({ title, players, onChange }) {
                     style={{
                       width: 'auto', minHeight: 32, fontSize: 12, padding: '0 8px',
                       background: p.capture_helper ? 'var(--green-500)' : 'var(--white)',
-                      color: p.capture_helper ? 'var(--white)' : 'var(--green-700)',
+                      color: p.capture_helper ? 'var(--on-accent)' : 'var(--green-700)',
                       border: p.capture_helper ? 'none' : '1.5px solid var(--green-500)',
                     }}
                   >
