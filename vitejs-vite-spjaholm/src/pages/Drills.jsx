@@ -186,7 +186,7 @@ export default function Drills() {
                   style={{
                     width: 'auto', minHeight: 38, fontSize: 13, padding: '0 14px',
                     background: isOn ? 'var(--green-500)' : 'var(--white)',
-                    color: isOn ? 'var(--white)' : 'var(--green-700)',
+                    color: isOn ? 'var(--on-accent)' : 'var(--green-700)',
                     border: isOn ? 'none' : '1.5px solid var(--green-500)',
                   }}
                 >
