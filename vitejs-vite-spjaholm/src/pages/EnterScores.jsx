@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../AuthContext.jsx';
 import { toPar, formatToPar, roundTotal } from '../lib/scoring.js';
@@ -8,6 +8,9 @@ import { enqueueScore, flushQueue, onReconnect, pendingCount, isOnline, trySaveS
 
 export default function EnterScores() {
   const { roundId } = useParams();
+  // ?player=<id> — set by the coach's "missing holes" list to open a specific card
+  const [searchParams] = useSearchParams();
+  const wantPlayer = searchParams.get('player');
   const { user, isCoach } = useAuth();
   const navigate = useNavigate();
 
@@ -137,7 +140,8 @@ export default function EnterScores() {
         ]);
         const luSet = new Set((luRes?.data ?? []).map((x) => x.player_id));
         const list = (all ?? [])
-          .filter((pl) => !pl.archived)
+          // archived players are hidden, unless a link asked for their card
+          .filter((pl) => !pl.archived || pl.id === wantPlayer)
           .map((pl) => ({ id: pl.id, full_name: pl.full_name, inLineup: luSet.has(pl.id) }));
         if (luSet.size) {
           list.sort((a, b) => (b.inLineup - a.inLineup) || a.full_name.localeCompare(b.full_name));
@@ -147,7 +151,9 @@ export default function EnterScores() {
 
       // Default target: your own card if you have one. A coach without a
       // roster row picks a player from the dropdown instead.
-      if (p) await loadPlayerData(p.id, r.type);
+      // A coach following a "fix missing holes" link opens that player's card.
+      if (isCoach && wantPlayer) await loadPlayerData(wantPlayer, r.type);
+      else if (p) await loadPlayerData(p.id, r.type);
 
       // coach's pre-round note for this round (not player-specific)
       const { data: note } = await supabase
@@ -182,7 +188,7 @@ export default function EnterScores() {
 
       setLoading(false);
     })();
-  }, [roundId, user.id]);
+  }, [roundId, user.id, wantPlayer]);
 
   // Start/stop the GPS watcher only while the Yardages readout is on, so the
   // scoring screen doesn't drain GPS for players who don't use it.

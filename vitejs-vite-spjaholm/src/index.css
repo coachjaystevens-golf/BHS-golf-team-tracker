@@ -27,8 +27,9 @@ body {
   color: var(--ink);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right)
-           env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* top inset is handled by .topbar so its color fills the phone's status bar
+     when opened from the home screen; bottom inset by .bottom-nav */
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -39,6 +40,8 @@ body {
   max-width: 520px;
   margin: 0 auto;
   min-height: 100%;
+  /* room for the fixed bottom nav (plus the iPhone home bar) so it never covers content */
+  padding-bottom: calc(var(--tap) + env(safe-area-inset-bottom) + 8px);
   display: flex;
   flex-direction: column;
 }
@@ -47,6 +50,7 @@ body {
   background: var(--green-700);
   color: var(--white);
   padding: 16px 18px;
+  padding-top: calc(16px + env(safe-area-inset-top));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -122,7 +126,7 @@ tr.dropped td { color: var(--muted); text-decoration: line-through; }
 .spacer { height: 10px; }
 .row-between { display: flex; justify-content: space-between; align-items: center; }
 
-.bottom-nav { display: flex; border-top: 1px solid var(--line); background: var(--white); position: sticky; bottom: 0; }
+.bottom-nav { display: flex; border-top: 1px solid var(--line); background: var(--white); position: sticky; bottom: 0; padding-bottom: env(safe-area-inset-bottom); }
 .bottom-nav a {
   flex: 1; text-align: center; padding: 12px 4px; font-size: 12px;
   color: var(--muted); text-decoration: none; min-height: var(--tap);

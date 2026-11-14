@@ -19,6 +19,7 @@ import Drills from './pages/Drills.jsx';
 import Challenge from './pages/Challenge.jsx';
 import PuttingDrills from './pages/PuttingDrills.jsx';
 import Practice from './pages/Practice.jsx';
+import InstallHint from './InstallHint.jsx';
 function Shell() {
   const { user, loading, isCoach, isLinked, isCaptureHelper, signOut, recovery } = useAuth();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -44,7 +45,8 @@ function Shell() {
   }
   if (!user) {
     return (
-      <div className="app-shell">
+      <div className="app-shell" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+        <InstallHint beforeLogin />
         <Login />
       </div>
     );
@@ -67,6 +69,7 @@ function Shell() {
         <h1>Golf Team Tracker</h1>
         <span className="role-tag">{isCoach ? 'Coach' : 'Player'}</span>
       </div>
+      <InstallHint />
       <Routes>
         <Route path="/" element={isCoach ? <Navigate to="/coach" /> : <Navigate to="/rounds" />} />
         <Route path="/rounds" element={<Rounds />} />

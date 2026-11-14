@@ -4,6 +4,7 @@ import { roundTotal, teamScore, formatToPar, toPar, scoringAverage } from '../li
 import { useAuth } from '../AuthContext.jsx';
 import { fetchAll } from '../lib/fetchAll.js';
 import Compare from './Compare.jsx';
+import MissingHoles from './MissingHoles.jsx';
 
 export default function CoachDashboard() {
   const [tab, setTab] = useState('home');
@@ -166,6 +167,9 @@ function Home({ onNavigate }) {
           </p>
         </div>
       )}
+
+      {/* score cards that still have holes to enter */}
+      <MissingHoles />
 
       {/* quick navigation */}
       <p className="eyebrow">Jump to</p>

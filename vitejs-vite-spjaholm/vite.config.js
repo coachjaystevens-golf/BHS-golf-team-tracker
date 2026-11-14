@@ -36,15 +36,53 @@ function schoolBranding(env) {
         .replace(
           '</head>',
           `    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="apple-mobile-web-app-title" content="${esc(name)}" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="theme-color" content="${toHex(primary)}" />
   </head>`,
         )
     },
     generateBundle() {
-      this.emitFile({ type: 'asset', fileName: 'apple-touch-icon.png', source: drawIcon(primary, accent) })
+      // iPhone home-screen icon, plus the Android sizes the manifest points to
+      this.emitFile({ type: 'asset', fileName: 'apple-touch-icon.png', source: drawIcon(primary, accent, 180) })
+      this.emitFile({ type: 'asset', fileName: 'icon-192.png', source: drawIcon(primary, accent, 192) })
+      this.emitFile({ type: 'asset', fileName: 'icon-512.png', source: drawIcon(primary, accent, 512) })
+      // Web app manifest: lets the site open full-screen like an app when
+      // added to the home screen (Android uses this; iPhone uses the meta tags above)
+      this.emitFile({
+        type: 'asset',
+        fileName: 'manifest.webmanifest',
+        source: JSON.stringify({
+          name,
+          short_name: shortName(name),
+          start_url: '/',
+          scope: '/',
+          display: 'standalone',
+          orientation: 'portrait',
+          theme_color: toHex(primary),
+          background_color: toHex(hex(env.VITE_THEME_BACKGROUND) || [247, 245, 239]),
+          icons: [
+            { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+            { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+          ],
+        }, null, 2),
+      })
     },
   }
+}
+
+// Home-screen label: Android cuts names past ~12 letters, so drop whole words to fit
+function shortName(name) {
+  if (name.length <= 12) return name
+  let out = ''
+  for (const w of name.split(/\s+/)) {
+    if ((out ? out + ' ' + w : w).length > 12) break
+    out = out ? out + ' ' + w : w
+  }
+  return out || name.slice(0, 12)
 }
 
 function hex(v) {
@@ -56,9 +94,9 @@ function hex(v) {
 const toHex = (c) => '#' + c.map((x) => Math.round(x).toString(16).padStart(2, '0')).join('')
 const mix = (a, b, t) => a.map((c, i) => c + (b[i] - c) * t)
 
-// 180×180 icon: flagstick on a green, in the school's colors.
-function drawIcon(primary, accent) {
-  const S = 180, SS = 4 // supersampling for smooth edges
+// Square icon (S×S pixels): flagstick on a green, in the school's colors.
+function drawIcon(primary, accent, S = 180) {
+  const SS = 4 // supersampling for smooth edges
   const WHITE = [255, 255, 255]
   const green = mix(primary, WHITE, 0.22)
   const hole = mix(primary, [0, 0, 0], 0.45)
