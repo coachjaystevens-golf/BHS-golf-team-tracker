@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 
 const API_BASE = 'https://api.golfcourseapi.com';
@@ -16,26 +16,70 @@ export default function AddCourse() {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
 
-  async function search() {
+  // Arriving from "You're at <course>… Add its scorecard": search for it right away
+  const [params] = useSearchParams();
+  const fromQ = params.get('q');
+  const fromLat = Number(params.get('lat'));
+  const fromLng = Number(params.get('lng'));
+  const returnTo = params.get('return');
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (!fromQ || autoRan.current) return;
+    autoRan.current = true;
+    setQuery(fromQ);
+    search(fromQ, { autoPick: true });
+  }, [fromQ]);
+
+  async function search(text = query, { autoPick = false } = {}) {
     setError(''); setInfo(''); setResults(null); setPicked(null);
-    if (!query.trim()) return;
+    const q = (typeof text === 'string' ? text : query).trim();
+    if (!q) return;
     if (!API_KEY) { setError('Course search is not configured. Ask your coach.'); return; }
     setSearching(true);
     try {
-      const res = await fetch(
-        `${API_BASE}/v1/search?search_query=${encodeURIComponent(query.trim())}`,
-        { headers: { Authorization: `Key ${API_KEY}` } }
-      );
-      if (!res.ok) {
-        setError(res.status === 401 ? 'Course search key was rejected. Ask your coach.' : `Search failed (${res.status}).`);
+      const run = async (term) => {
+        const res = await fetch(
+          `${API_BASE}/v1/search?search_query=${encodeURIComponent(term)}`,
+          { headers: { Authorization: `Key ${API_KEY}` } }
+        );
+        if (!res.ok) throw Object.assign(new Error('search'), { status: res.status });
+        return (await res.json()).courses ?? [];
+      };
+      let hits = await run(q);
+      // Map names don't always match the course database word for word
+      // ("Legends Club of Tennessee" vs "The Legends Club"), so retry with
+      // the distinctive words only.
+      if (hits.length === 0 && autoPick) {
+        const core = q.replace(/\b(the|golf|country|club|course|links|of|and|&|cc|gc)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+        if (core && core.toLowerCase() !== q.toLowerCase()) hits = await run(core);
+      }
+      // Closest first when we know where the person is standing
+      if (Number.isFinite(fromLat) && Number.isFinite(fromLng)) {
+        const km = (h) => {
+          const la = h.location?.latitude, lo = h.location?.longitude;
+          if (la == null || lo == null) return Infinity;
+          const r = Math.PI / 180;
+          const x = Math.sin(((la - fromLat) * r) / 2) ** 2 +
+            Math.cos(fromLat * r) * Math.cos(la * r) * Math.sin(((lo - fromLng) * r) / 2) ** 2;
+          return 12742 * Math.asin(Math.sqrt(x));
+        };
+        hits = hits.map((h) => ({ ...h, _km: km(h) })).sort((a, b) => a._km - b._km);
+      }
+      setResults(hits);
+      if (hits.length === 0) {
+        setInfo('No courses found. Try a different spelling or include the city.');
+      } else if (autoPick && (hits.length === 1 || hits[0]._km < 5)) {
+        // one clear match (or one right where you're standing): open its scorecard
+        setSearching(false);
+        await pick(hits[0]);
+        return;
+      }
+    } catch (e) {
+      if (e?.status) {
+        setError(e.status === 401 ? 'Course search key was rejected. Ask your coach.' : `Search failed (${e.status}).`);
         setSearching(false);
         return;
       }
-      const data = await res.json();
-      const hits = data.courses ?? [];
-      setResults(hits);
-      if (hits.length === 0) setInfo('No courses found. Try a different spelling or include the city.');
-    } catch {
       setError('Could not reach the course search. Check your connection.');
     }
     setSearching(false);
@@ -102,18 +146,25 @@ export default function AddCourse() {
       .select('id, name')
       .ilike('name', displayName);
     if (existing && existing.length > 0) {
+      if (returnTo && returnTo.startsWith('/')) { navigate(`${returnTo}?course=${existing[0].id}`); return; }
       setInfo(`"${displayName}" is already in the course list — you can use it now.`);
       setImporting(false);
       return;
     }
 
-    const { error: insErr } = await supabase.from('courses').insert({
+    const { data: added, error: insErr } = await supabase.from('courses').insert({
       name: displayName,
       holes: parList.length,
       par_per_hole: parList,
-    });
+    }).select('id').single();
     setImporting(false);
     if (insErr) { setError(insErr.message); return; }
+
+    // came from "Add its scorecard" on the new-round form: go back with it picked
+    if (returnTo && returnTo.startsWith('/') && added?.id) {
+      navigate(`${returnTo}?course=${added.id}`);
+      return;
+    }
 
     setInfo(`"${displayName}" added! You can now create a round on it.`);
     setPicked(null);
@@ -137,7 +188,7 @@ export default function AddCourse() {
           placeholder="e.g. Pebble Creek, or include the city"
         />
         <div className="spacer" />
-        <button onClick={search} disabled={searching || !query.trim()}>
+        <button onClick={() => search(query)} disabled={searching || !query.trim()}>
           {searching ? 'Searching…' : 'Search'}
         </button>
       </div>

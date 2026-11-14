@@ -9,9 +9,10 @@
 //   enabled  only ask for location when true (e.g. when the new-round form is open)
 //   pos      optional {lat,lng,acc} from a page that already watches GPS; when
 //            given, no separate location request is made
-// returns { status, match }
+// returns { status, match, pos }
 //   status   'idle' | 'locating' | 'found' | 'far' | 'denied' | 'unavailable'
 //   match    { courseId, meters, ambiguous } when status === 'found'
+//   pos      the position used, once there's a usable fix
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from './supabase.js';
@@ -103,7 +104,7 @@ export function useNearestCourse({ enabled = true, pos = null } = {}) {
     else if (!usable || !greens) status = 'locating';
     else status = match ? 'found' : 'far';
   }
-  return { status, match };
+  return { status, match, pos: usable ? here : null };
 }
 
 // One-line status shown next to a course picker.

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../AuthContext.jsx';
 import { useNearestCourse, NearestCourseNote } from '../lib/nearestCourse.jsx';
+import { UnknownCourseNote } from '../lib/osmCourse.jsx';
 
 export default function Rounds() {
   const { isCoach, seasons, seasonId, setSeasonId, activeSeason } = useAuth();
@@ -65,6 +66,17 @@ export default function Rounds() {
     const id = near.match?.courseId;
     if (id && !userPickedCourse.current && courses.some((c) => c.id === id)) setCourseId(id);
   }, [near.match?.courseId, courses]);
+
+  // back from "Add its scorecard": open the form with the new course picked
+  const [params, setParams] = useSearchParams();
+  const returnedCourse = params.get('course');
+  useEffect(() => {
+    if (!returnedCourse || !courses.some((c) => c.id === returnedCourse)) return;
+    userPickedCourse.current = true;
+    setCourseId(returnedCourse);
+    setShowForm(true);
+    setParams({}, { replace: true });
+  }, [returnedCourse, courses]);
 
   const selectedCourse = courses.find((c) => c.id === courseId);
   const courseIs18 = selectedCourse?.holes === 18;
@@ -183,6 +195,11 @@ export default function Rounds() {
                   ))}
                 </select>
                 <NearestCourseNote near={near} courses={courses} courseId={courseId} onUse={(id) => { userPickedCourse.current = true; setCourseId(id); }} />
+                <UnknownCourseNote
+                  pos={near.pos} enabled={near.status === 'far'} returnTo="/rounds"
+                  courses={courses} courseId={courseId}
+                  onUse={(id) => { userPickedCourse.current = true; setCourseId(id); }}
+                />
 
                 {courseIs18 && (
                   <>
