@@ -1,0 +1,27 @@
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: "17 14 */3 * *"   # every 3 days, ~8:17 AM Central
+  workflow_dispatch:          # adds a "Run workflow" button for testing
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Beech
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://aktixmspptbgvccacbby.supabase.co/rest/v1/courses?select=id&limit=1" \
+            -H "apikey: sb_publishable_uBPxXRnZ4icJlE9yRDOxgg_i_NrjUVG")
+          echo "Beech responded: $code"
+          [ "$code" -lt 500 ]
+
+      - name: Ping Gallatin
+        if: always()
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://hjlkrckyqcnjbtzpsidg.supabase.co/rest/v1/courses?select=id&limit=1" \
+            -H "apikey: sb_publishable_VXSe4b8BFFHPBV4WU3HoFA_IHL78HYd")
+          echo "Gallatin responded: $code"
+          [ "$code" -lt 500 ]
