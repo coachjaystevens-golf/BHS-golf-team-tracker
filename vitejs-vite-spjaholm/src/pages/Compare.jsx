@@ -156,7 +156,7 @@ function FilterCard({ filter, setFilter }) {
 
 // ---------- trend chart (to par per complete round, by date) ----------
 
-function TrendChart({ series }) {
+export function TrendChart({ series }) {
   const W = 340, H = 200, L = 34, R = 10, T = 12, B = 26;
   const pts = series.flatMap((s) => s.points);
   if (pts.length < 2) {
