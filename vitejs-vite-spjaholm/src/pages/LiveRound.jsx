@@ -415,7 +415,7 @@ export default function LiveRound() {
       <div
         className="card"
         style={{
-          position: 'sticky', top: 0, zIndex: 50,
+          position: 'sticky', top: 'env(safe-area-inset-top)', zIndex: 50,
           padding: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
         }}
       >
