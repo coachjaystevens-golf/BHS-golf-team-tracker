@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../AuthContext.jsx';
+import { useNearestCourse, NearestCourseNote } from '../lib/nearestCourse.jsx';
 
 export default function Rounds() {
   const { isCoach, seasons, seasonId, setSeasonId, activeSeason } = useAuth();
@@ -56,6 +57,14 @@ export default function Rounds() {
   }
 
   useEffect(() => { load(); }, [seasonId]);
+
+  // auto-pick the course the phone is standing on (until the person picks one by hand)
+  const userPickedCourse = useRef(false);
+  const near = useNearestCourse({ enabled: showForm, pos: null });
+  useEffect(() => {
+    const id = near.match?.courseId;
+    if (id && !userPickedCourse.current && courses.some((c) => c.id === id)) setCourseId(id);
+  }, [near.match?.courseId, courses]);
 
   const selectedCourse = courses.find((c) => c.id === courseId);
   const courseIs18 = selectedCourse?.holes === 18;
@@ -153,7 +162,7 @@ export default function Rounds() {
 
       <div className="card">
         {!showForm ? (
-          <button onClick={() => setShowForm(true)}>
+          <button onClick={() => { userPickedCourse.current = false; setShowForm(true); }}>
             {isCoach ? '+ New round' : '+ New practice round'}
           </button>
         ) : (
@@ -168,11 +177,12 @@ export default function Rounds() {
             ) : (
               <>
                 <label>Course</label>
-                <select value={courseId} onChange={(e) => setCourseId(e.target.value)}>
+                <select value={courseId} onChange={(e) => { userPickedCourse.current = true; setCourseId(e.target.value); }}>
                   {courses.map((c) => (
                     <option key={c.id} value={c.id}>{c.name} ({c.holes} holes)</option>
                   ))}
                 </select>
+                <NearestCourseNote near={near} courses={courses} courseId={courseId} onUse={(id) => { userPickedCourse.current = true; setCourseId(id); }} />
 
                 {courseIs18 && (
                   <>
