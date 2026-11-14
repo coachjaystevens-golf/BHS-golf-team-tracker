@@ -1,9 +1,25 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase.js';
+import { fetchAll } from '../lib/fetchAll.js';
 import { useAuth } from '../AuthContext.jsx';
-import {
-  roundTotal, toPar, formatToPar, tallyResults, scoringAverage,
-} from '../lib/scoring.js';
+import { toPar, formatToPar, tallyResults, scoringAverage } from '../lib/scoring.js';
+import { isComplete, summarize } from '../lib/compareStats.js';
+import { TrendChart } from './Compare.jsx';
+
+// Averages, best round and trend use COMPLETE cards only (every hole entered),
+// so a half-entered card can't make a player look better than they are.
+// Per-hole stats (putts, greens, fairways, par 3/4/5) use every hole entered.
+// Team numbers come from team_stat_averages() — aggregates only, never a
+// teammate's own scores — and are hidden when fewer than 3 players have rounds.
+
+const fmt1 = (v) => (v == null ? '—' : Number(v).toFixed(1));
+const fmtPct = (v) => (v == null ? '—' : `${Math.round(Number(v))}%`);
+const fmtVsPar = (v) => {
+  if (v == null) return '—';
+  const n = Number(v);
+  if (Math.abs(n) < 0.005) return 'E';
+  return (n > 0 ? '+' : '') + n.toFixed(2);
+};
 
 export default function MyStats() {
   const { user, seasons, seasonId, setSeasonId, selectedSeason } = useAuth();
@@ -14,24 +30,25 @@ export default function MyStats() {
   useEffect(() => {
     (async () => {
       setLoading(true);
+      setError('');
       const { data: p } = await supabase
         .from('players')
-        .select('id, full_name')
+        .select('id, full_name, gender')
         .eq('user_id', user.id)
         .maybeSingle();
 
       if (!p) { setData(null); setLoading(false); return; }
       if (!seasonId) { setData({ name: p.full_name, empty: true }); setLoading(false); return; }
 
-      // pull scores joined to their round (incl. hole range) for this season
-      const { data: rows, error: e } = await supabase
+      // this player's scores for the season, with each round's hole range and par
+      const { data: rows, error: e } = await fetchAll(() => supabase
         .from('scores')
-        .select('strokes, hole_number, putts, fairway_hit, green_in_regulation, rounds!inner ( id, type, season_id, start_hole, end_hole, played_on, courses ( par_per_hole ) )')
+        .select('id, strokes, hole_number, putts, fairway_hit, green_in_regulation, rounds!inner ( id, type, season_id, start_hole, end_hole, played_on, courses ( par_per_hole ) )')
         .eq('player_id', p.id)
-        .eq('rounds.season_id', seasonId);
+        .eq('rounds.season_id', seasonId));
       if (e) { setError(e.message); setLoading(false); return; }
 
-      // pull this player's short-game stats (up&down, bunker) for the season
+      // short-game stats (up & down, bunker) for the season
       const { data: sgRows } = await supabase
         .from('round_stats')
         .select('round_id, up_down_made, up_down_attempts, bunker_made, bunker_attempts, rounds!inner ( season_id )')
@@ -40,23 +57,25 @@ export default function MyStats() {
       const sgByRound = {};
       for (const s of sgRows ?? []) sgByRound[s.round_id] = s;
 
-      // group by round
+      // group by round, in the shape the shared stat math expects
       const byRound = {};
       for (const row of rows ?? []) {
         const rd = row.rounds;
-        const rid = rd?.id;
-        if (!rid) continue;
-        if (!byRound[rid]) {
-          byRound[rid] = {
+        if (!rd?.id) continue;
+        if (!byRound[rd.id]) {
+          const start = rd.start_hole ?? 1;
+          const end = rd.end_hole ?? 18;
+          byRound[rd.id] = {
+            id: rd.id,
+            type: rd.type,
+            playedOn: rd.played_on ?? null,
+            holeCount: end - start + 1,
             par: rd.courses?.par_per_hole ?? [],
-            start: rd.start_hole ?? 1,
-            end: rd.end_hole ?? 18,
-            played_on: rd.played_on ?? null,
-            shortGame: sgByRound[rid] ?? null,
+            sg: sgByRound[rd.id] ?? null,
             scores: [],
           };
         }
-        byRound[rid].scores.push({
+        byRound[rd.id].scores.push({
           hole_number: row.hole_number,
           strokes: row.strokes,
           putts: row.putts,
@@ -64,121 +83,29 @@ export default function MyStats() {
           green_in_regulation: row.green_in_regulation,
         });
       }
+      const all = Object.values(byRound);
+      const full18 = all.filter((r) => r.holeCount > 9);
+      const nine = all.filter((r) => r.holeCount <= 9);
 
-      // classify each round as 9-hole or 18-hole by its range
-      const buckets = { full18: [], nine: [] };
-      for (const r of Object.values(byRound)) {
-        const holeCount = r.end - r.start + 1;
-        if (holeCount <= 9) buckets.nine.push(r);
-        else buckets.full18.push(r);
-      }
-
-      const summarize = (list) => {
-        if (list.length === 0) return null;
-        const totals = list.map((r) => roundTotal(r.scores));
-        const tally = { eagle: 0, birdie: 0, par: 0, bogey: 0, double_plus: 0 };
-        let best = null;
-
-        // detail-stat accumulators
-        let puttsSum = 0, puttsHoles = 0, threePutts = 0;
-        let fairwayHits = 0, fairwayChances = 0;
-        let girHits = 0, girHoles = 0;
-        // short-game accumulators
-        let udMade = 0, udAtt = 0, bnMade = 0, bnAtt = 0;
-
-        for (const r of list) {
-          const t = tallyResults(r.scores, r.par);
-          for (const k in tally) tally[k] += t[k];
-          const tp = toPar(r.scores, r.par);
-          if (best === null || tp < best) best = tp;
-
-          // fold in this round's short game, if recorded
-          if (r.shortGame) {
-            udMade += r.shortGame.up_down_made ?? 0;
-            udAtt += r.shortGame.up_down_attempts ?? 0;
-            bnMade += r.shortGame.bunker_made ?? 0;
-            bnAtt += r.shortGame.bunker_attempts ?? 0;
-          }
-
-          for (const s of r.scores) {
-            const holePar = r.par[s.hole_number - 1];
-            // putts: count any hole where putts were recorded
-            if (s.putts != null) {
-              puttsSum += s.putts;
-              puttsHoles += 1;
-              if (s.putts >= 3) threePutts += 1;
-            }
-            // fairways: only par 4s and 5s count as a chance
-            if (s.fairway_hit != null && holePar && holePar > 3) {
-              fairwayChances += 1;
-              if (s.fairway_hit === true) fairwayHits += 1;
-            }
-            // greens: every hole with a recorded value counts
-            if (s.green_in_regulation != null) {
-              girHoles += 1;
-              if (s.green_in_regulation === true) girHits += 1;
-            }
-          }
-        }
-
-        const pct = (hit, total) => (total > 0 ? Math.round((hit / total) * 100) : null);
-        const puttsPerRound = puttsHoles > 0
-          ? Math.round((puttsSum / list.length) * 10) / 10
-          : null;
-
-        // ---- Improvement: half-vs-half average, chronological ----
-        // Order rounds by date; rounds without a date sort last but still count.
-        const dated = [...list].sort((a, b) => {
-          const da = a.played_on ?? '9999-12-31';
-          const db = b.played_on ?? '9999-12-31';
-          return da < db ? -1 : da > db ? 1 : 0;
+      // team averages (aggregates only); quietly skipped if unavailable
+      const team = async (holes) => {
+        if (!p.gender) return null;
+        const { data: t, error: te } = await supabase.rpc('team_stat_averages', {
+          p_season: seasonId, p_gender: p.gender, p_holes: holes,
         });
-        let improvement = null;
-        if (dated.length >= 4) {
-          const mid = Math.floor(dated.length / 2);
-          const firstHalf = dated.slice(0, mid);
-          const secondHalf = dated.slice(dated.length - mid); // same size as firstHalf
-          const avgOf = (arr) => {
-            const t = arr.map((r) => roundTotal(r.scores));
-            return scoringAverage(t);
-          };
-          const early = avgOf(firstHalf);
-          const recent = avgOf(secondHalf);
-          if (early != null && recent != null) {
-            const delta = Math.round((early - recent) * 10) / 10; // positive = improved
-            improvement = { early, recent, delta, firstN: firstHalf.length, secondN: secondHalf.length };
-          }
-        }
-
-        return {
-          rounds: list.length,
-          average: scoringAverage(totals),
-          bestToPar: best,
-          tally,
-          improvement,
-          detail: {
-            puttsPerRound,
-            puttsHoles,
-            threePutts,
-            fairwayPct: pct(fairwayHits, fairwayChances),
-            fairwayHits, fairwayChances,
-            girPct: pct(girHits, girHoles),
-            girHits, girHoles,
-          },
-          shortGame: {
-            udPct: pct(udMade, udAtt),
-            udMade, udAtt,
-            sandPct: pct(bnMade, bnAtt),
-            bnMade, bnAtt,
-          },
-        };
+        if (te || !t?.[0] || t[0].avg_score == null && t[0].putts_per_round == null) return null;
+        return t[0];
       };
+      const [team18, team9] = await Promise.all([
+        full18.length ? team(18) : null,
+        nine.length ? team(9) : null,
+      ]);
 
       setData({
         name: p.full_name,
-        full18: summarize(buckets.full18),
-        nine: summarize(buckets.nine),
-        empty: Object.keys(byRound).length === 0,
+        full18: buildBlock(full18, 18, team18),
+        nine: buildBlock(nine, 9, team9),
+        empty: all.length === 0,
       });
       setLoading(false);
     })();
@@ -215,139 +142,6 @@ export default function MyStats() {
     );
   }
 
-  const StatBlock = ({ label, s }) => (
-    <div className="card">
-      <p className="eyebrow">{selectedSeason?.name ?? 'Season'} · {label}</p>
-      {!s ? (
-        <p className="muted">No {label.toLowerCase()} recorded yet.</p>
-      ) : (
-        <>
-          <div className="stat-grid">
-            <div className="stat-box">
-              <div className="n">{s.average ?? '—'}</div>
-              <div className="l">Scoring average</div>
-            </div>
-            <div className="stat-box">
-              <div className="n">{s.rounds}</div>
-              <div className="l">Rounds played</div>
-            </div>
-            <div className="stat-box">
-              <div className="n">{s.bestToPar === null ? '—' : formatToPar(s.bestToPar)}</div>
-              <div className="l">Best round (to par)</div>
-            </div>
-            <div className="stat-box">
-              <div className="n">{s.tally.birdie + s.tally.eagle}</div>
-              <div className="l">Birdies or better</div>
-            </div>
-          </div>
-
-          <table style={{ marginTop: 12 }}>
-            <tbody>
-              <tr><td>Eagles or better</td><td className="num">{s.tally.eagle}</td></tr>
-              <tr><td>Birdies</td><td className="num">{s.tally.birdie}</td></tr>
-              <tr><td>Pars</td><td className="num">{s.tally.par}</td></tr>
-              <tr><td>Bogeys</td><td className="num">{s.tally.bogey}</td></tr>
-              <tr><td>Double bogey +</td><td className="num">{s.tally.double_plus}</td></tr>
-            </tbody>
-          </table>
-
-          {/* Improvement trend — half vs half, gated at 4 rounds */}
-          <p className="eyebrow" style={{ marginTop: 16 }}>Your trend this season</p>
-          {!s.improvement ? (
-            <p className="muted" style={{ fontSize: 13 }}>
-              Keep playing — your improvement trend shows up once you've got
-              about four {label.toLowerCase()} in. ({s.rounds} so far.)
-            </p>
-          ) : (
-            <div
-              className="stat-box"
-              style={{
-                background: s.improvement.delta > 0 ? 'var(--green-100)' : 'var(--white)',
-                marginBottom: 4,
-              }}
-            >
-              {s.improvement.delta > 0 ? (
-                <>
-                  <div className="n" style={{ color: 'var(--green-700)' }}>
-                    ▼ {s.improvement.delta}
-                  </div>
-                  <div className="l">
-                    strokes better — averaging {s.improvement.recent} lately vs {s.improvement.early} early in the season
-                  </div>
-                </>
-              ) : s.improvement.delta < 0 ? (
-                <>
-                  <div className="n">{Math.abs(s.improvement.delta)} up</div>
-                  <div className="l">
-                    averaging {s.improvement.recent} lately vs {s.improvement.early} earlier — keep at it, scores bounce around
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="n">Steady</div>
-                  <div className="l">
-                    holding around {s.improvement.recent} — consistency is its own win
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Putting & accuracy — only shown if any of it was recorded */}
-          {(s.detail.puttsHoles > 0 || s.detail.fairwayChances > 0 || s.detail.girHoles > 0) && (
-            <>
-              <p className="eyebrow" style={{ marginTop: 16 }}>Putting &amp; accuracy</p>
-              <div className="stat-grid">
-                <div className="stat-box">
-                  <div className="n">{s.detail.puttsPerRound ?? '—'}</div>
-                  <div className="l">Putts / round</div>
-                </div>
-                <div className="stat-box">
-                  <div className="n">{s.detail.girPct == null ? '—' : `${s.detail.girPct}%`}</div>
-                  <div className="l">Greens in reg</div>
-                </div>
-                <div className="stat-box">
-                  <div className="n">{s.detail.fairwayPct == null ? '—' : `${s.detail.fairwayPct}%`}</div>
-                  <div className="l">Fairways hit</div>
-                </div>
-                <div className="stat-box">
-                  <div className="n">{s.detail.puttsHoles > 0 ? s.detail.threePutts : '—'}</div>
-                  <div className="l">3-putts</div>
-                </div>
-              </div>
-              <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-                Based on holes where you logged putts, fairways, and greens —
-                fairway % counts par 4s and 5s only.
-              </p>
-            </>
-          )}
-
-          {/* Short game — only shown if up&down or bunker attempts were logged */}
-          {(s.shortGame.udAtt > 0 || s.shortGame.bnAtt > 0) && (
-            <>
-              <p className="eyebrow" style={{ marginTop: 16 }}>Short game</p>
-              <div className="stat-grid">
-                <div className="stat-box">
-                  <div className="n">{s.shortGame.udPct == null ? '—' : `${s.shortGame.udPct}%`}</div>
-                  <div className="l">Up &amp; down</div>
-                </div>
-                <div className="stat-box">
-                  <div className="n">{s.shortGame.sandPct == null ? '—' : `${s.shortGame.sandPct}%`}</div>
-                  <div className="l">Sand saves</div>
-                </div>
-              </div>
-              <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-                Up &amp; down: {s.shortGame.udMade}/{s.shortGame.udAtt} ·
-                Sand saves: {s.shortGame.bnMade}/{s.shortGame.bnAtt} this season.
-                Short game is where you save the most strokes.
-              </p>
-            </>
-          )}
-        </>
-      )}
-    </div>
-  );
-
   return (
     <div className="content">
       {seasonSwitcher}
@@ -362,9 +156,222 @@ export default function MyStats() {
 
       {!data.empty && (
         <>
-          <StatBlock label="18-hole rounds" s={data.full18} />
-          <StatBlock label="9-hole rounds" s={data.nine} />
+          <StatBlock label="18-hole rounds" s={data.full18} seasonName={selectedSeason?.name} />
+          <StatBlock label="9-hole rounds" s={data.nine} seasonName={selectedSeason?.name} />
         </>
+      )}
+    </div>
+  );
+}
+
+// Everything one stat card needs, from a list of rounds
+function buildBlock(rounds, holes, team) {
+  if (rounds.length === 0) return null;
+  const s = summarize(rounds, holes);
+
+  const tally = { eagle: 0, birdie: 0, par: 0, bogey: 0, double_plus: 0 };
+  for (const r of rounds) {
+    const t = tallyResults(r.scores, r.par);
+    for (const k in tally) tally[k] += t[k];
+  }
+
+  // complete cards, oldest first, for the trend
+  const complete = rounds
+    .filter(isComplete)
+    .map((r) => ({ playedOn: r.playedOn, total: r.scores.reduce((a, x) => a + x.strokes, 0), toPar: toPar(r.scores, r.par) }))
+    .sort((a, b) => (a.playedOn ?? '9999').localeCompare(b.playedOn ?? '9999'));
+
+  // half vs half (by date), to par so different courses compare fairly
+  let improvement = null;
+  if (complete.length >= 4) {
+    const mid = Math.floor(complete.length / 2);
+    const early = complete.slice(0, mid);
+    const recent = complete.slice(complete.length - mid);
+    const avgTp = (a) => a.reduce((x, r) => x + r.toPar, 0) / a.length;
+    const e = avgTp(early), rc = avgTp(recent);
+    improvement = {
+      early: scoringAverage(early.map((r) => r.total)),
+      recent: scoringAverage(recent.map((r) => r.total)),
+      delta: Math.round((e - rc) * 10) / 10, // positive = improved (fewer strokes over par)
+    };
+  }
+
+  return {
+    ...s,
+    tally,
+    unfinished: s.rounds - s.complete,
+    improvement,
+    trendPoints: complete.filter((r) => r.playedOn).map((r) => ({ t: Date.parse(r.playedOn), v: r.toPar })),
+    team,
+  };
+}
+
+// Big number with the team average under it, and a "better than team" hint
+function Stat({ n, label, team, better, mine, theirs }) {
+  let hint = null;
+  if (team != null && mine != null && theirs != null && better) {
+    const d = Number(mine) - Number(theirs);
+    const ahead = better === 'low' ? d < -0.05 : d > 0.05;
+    if (ahead) hint = <span style={{ color: 'var(--good-ink)', fontWeight: 700 }}> ✓</span>;
+  }
+  return (
+    <div className="stat-box">
+      <div className="n">{n}</div>
+      <div className="l">{label}</div>
+      {team != null && (
+        <div className="l" style={{ marginTop: 4 }}>Team {team}{hint}</div>
+      )}
+    </div>
+  );
+}
+
+function StatBlock({ label, s, seasonName }) {
+  if (!s) {
+    return (
+      <div className="card">
+        <p className="eyebrow">{seasonName ?? 'Season'} · {label}</p>
+        <p className="muted">No {label.toLowerCase()} recorded yet.</p>
+      </div>
+    );
+  }
+  const t = s.team;
+  const T = (v, f) => (t ? f(v) : null);
+
+  return (
+    <div className="card">
+      <p className="eyebrow">{seasonName ?? 'Season'} · {label}</p>
+
+      <div className="stat-grid">
+        <Stat n={s.avg ?? '—'} label="Scoring average" team={T(t?.avg_score, fmt1)} better="low" mine={s.avg} theirs={t?.avg_score} />
+        <Stat n={s.complete} label={s.complete === 1 ? 'Full round' : 'Full rounds'} />
+        <Stat n={s.best == null ? '—' : formatToPar(s.best)} label="Best round (to par)" />
+        <Stat n={s.tally.birdie + s.tally.eagle} label="Birdies or better" />
+      </div>
+
+      {s.unfinished > 0 && (
+        <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          {s.unfinished} {s.unfinished === 1 ? 'card is' : 'cards are'} missing holes, so{' '}
+          {s.unfinished === 1 ? "it's" : "they're"} left out of your average. Finish entering{' '}
+          {s.unfinished === 1 ? 'it' : 'them'} (or ask your coach) to count {s.unfinished === 1 ? 'it' : 'them'}.
+        </p>
+      )}
+
+      <table style={{ marginTop: 12 }}>
+        <tbody>
+          <tr><td>Eagles or better</td><td className="num">{s.tally.eagle}</td></tr>
+          <tr><td>Birdies</td><td className="num">{s.tally.birdie}</td></tr>
+          <tr><td>Pars</td><td className="num">{s.tally.par}</td></tr>
+          <tr><td>Bogeys</td><td className="num">{s.tally.bogey}</td></tr>
+          <tr><td>Double bogey +</td><td className="num">{s.tally.double_plus}</td></tr>
+        </tbody>
+      </table>
+
+      {/* Trend */}
+      <p className="eyebrow" style={{ marginTop: 16 }}>Your trend this season</p>
+      {!s.improvement ? (
+        <p className="muted" style={{ fontSize: 13 }}>
+          Keep playing. Your improvement trend shows up once you've finished about
+          four {label.toLowerCase()}. ({s.complete} so far.)
+        </p>
+      ) : (
+        <div
+          className="stat-box"
+          style={{ background: s.improvement.delta > 0 ? 'var(--green-100)' : 'var(--white)', marginBottom: 8 }}
+        >
+          {s.improvement.delta > 0 ? (
+            <>
+              <div className="n" style={{ color: 'var(--green-700)' }}>▼ {s.improvement.delta}</div>
+              <div className="l">
+                strokes better vs par lately. Averaging {s.improvement.recent} recently vs {s.improvement.early} early in the season.
+              </div>
+            </>
+          ) : s.improvement.delta < 0 ? (
+            <>
+              <div className="n">{Math.abs(s.improvement.delta)} up</div>
+              <div className="l">
+                vs par lately ({s.improvement.recent} recently vs {s.improvement.early} earlier). Keep at it, scores bounce around.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="n">Steady</div>
+              <div className="l">holding around {s.improvement.recent}. Consistency is its own win.</div>
+            </>
+          )}
+        </div>
+      )}
+      {s.trendPoints.length >= 2 && (
+        <>
+          <TrendChart series={[{ name: 'You', color: 'var(--green-700)', points: s.trendPoints }]} />
+          <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+            Score to par for each full round. Lower is better.
+          </p>
+        </>
+      )}
+
+      {/* Where strokes go */}
+      {(s.par3 != null || s.par4 != null || s.par5 != null) && (
+        <>
+          <p className="eyebrow" style={{ marginTop: 16 }}>Where your strokes go</p>
+          <table>
+            <thead>
+              <tr>
+                <th />
+                <th className="num">You</th>
+                {t && <th className="num">Team</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {[['Par 3s', s.par3, t?.par3], ['Par 4s', s.par4, t?.par4], ['Par 5s', s.par5, t?.par5]].map(([lbl, me, tm]) => (
+                <tr key={lbl}>
+                  <td>{lbl}</td>
+                  <td className="num" style={{ fontWeight: 700 }}>{fmtVsPar(me)}</td>
+                  {t && <td className="num muted">{fmtVsPar(tm)}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+            Average score vs par on each type of hole. Your biggest number is where practice pays off most.
+          </p>
+        </>
+      )}
+
+      {/* Putting & accuracy */}
+      {(s.putts != null || s.gir != null || s.fir != null) && (
+        <>
+          <p className="eyebrow" style={{ marginTop: 16 }}>Putting &amp; accuracy</p>
+          <div className="stat-grid">
+            <Stat n={fmt1(s.putts)} label="Putts / round" team={T(t?.putts_per_round, fmt1)} better="low" mine={s.putts} theirs={t?.putts_per_round} />
+            <Stat n={fmtPct(s.gir)} label="Greens in reg" team={T(t?.gir_pct, fmtPct)} better="high" mine={s.gir} theirs={t?.gir_pct} />
+            <Stat n={fmtPct(s.fir)} label="Fairways hit" team={T(t?.fir_pct, fmtPct)} better="high" mine={s.fir} theirs={t?.fir_pct} />
+            <Stat n={fmt1(s.threePutts)} label="3-putts / round" team={T(t?.three_putts_per_round, fmt1)} better="low" mine={s.threePutts} theirs={t?.three_putts_per_round} />
+          </div>
+          <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+            Worked out from the holes where you logged putts, fairways and greens, so
+            skipped holes don't count against you. Fairway % counts par 4s and 5s only.
+          </p>
+        </>
+      )}
+
+      {/* Short game */}
+      {(s.ud != null || s.sand != null) && (
+        <>
+          <p className="eyebrow" style={{ marginTop: 16 }}>Short game</p>
+          <div className="stat-grid">
+            <Stat n={fmtPct(s.ud)} label={'Up & down'} team={T(t?.ud_pct, fmtPct)} better="high" mine={s.ud} theirs={t?.ud_pct} />
+            <Stat n={fmtPct(s.sand)} label="Sand saves" team={T(t?.sand_pct, fmtPct)} better="high" mine={s.sand} theirs={t?.sand_pct} />
+          </div>
+          <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+            Short game is where you save the most strokes.
+          </p>
+        </>
+      )}
+
+      {t && (
+        <p className="muted" style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}>
+          "Team" is the average across your team's {label.toLowerCase()} this season. ✓ means you're ahead of it.
+        </p>
       )}
     </div>
   );

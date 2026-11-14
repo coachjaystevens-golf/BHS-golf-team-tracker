@@ -5,6 +5,7 @@ import { useAuth } from '../AuthContext.jsx';
 import { fetchAll } from '../lib/fetchAll.js';
 import Compare from './Compare.jsx';
 import MissingHoles from './MissingHoles.jsx';
+import { inFilter, summarize as summarizeRounds } from '../lib/compareStats.js';
 
 export default function CoachDashboard() {
   const [tab, setTab] = useState('home');
@@ -1694,13 +1695,14 @@ function Analysis() {
         <h2>Blow-up holes</h2>
         <p className="muted" style={{ marginBottom: 8 }}>Holes scored double bogey or worse — limiting these is often the fastest way to lower a score.</p>
         <table>
-          <thead><tr><th>Player</th><th className="num">Blow-ups</th><th className="num">Per round</th></tr></thead>
+          <thead><tr><th>Player</th><th className="num">Blow-ups</th><th className="num">Per 18</th></tr></thead>
           <tbody>
             {[...playerList].sort((a, b) => b.blowups - a.blowups).map((p) => (
               <tr key={p.name}>
                 <td>{p.name}</td>
                 <td className="num">{p.blowups}</td>
-                <td className="num">{p.rounds.size ? Math.round((p.blowups / p.rounds.size) * 10) / 10 : '—'}</td>
+                {/* per 18 holes played, so short or 9-hole cards don't skew it */}
+                <td className="num">{p.holes ? Math.round((p.blowups / p.holes) * 18 * 10) / 10 : '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -1726,8 +1728,9 @@ function Analysis() {
             </thead>
             <tbody>
               {playerList.map((p) => {
-                const puttsPerRound = p.rounds.size && p.puttsHoles
-                  ? Math.round((p.puttsSum / p.rounds.size) * 10) / 10
+                // putts per hole logged, scaled to 18 holes
+                const puttsPerRound = p.puttsHoles
+                  ? Math.round((p.puttsSum / p.puttsHoles) * 18 * 10) / 10
                   : null;
                 const fwPct = p.fairwayTotal
                   ? Math.round((p.fairwayHit / p.fairwayTotal) * 100)
@@ -1840,6 +1843,7 @@ function Leaderboard() {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
   const [sortKey, setSortKey] = useState('average'); // average | putts | pars | best
+  const [holes, setHoles] = useState('18');          // '18' | '9' — never mix the two
 
   async function load() {
     if (!seasonId) { setRows(null); return; }
@@ -1849,65 +1853,27 @@ function Leaderboard() {
     // every score this season, with player + round range + course par
     const { data: scoreRows, error: e } = await fetchAll(() => supabase
       .from('scores')
-      .select('id, strokes, hole_number, putts, players ( id, full_name, gender ), rounds!inner ( id, season_id, start_hole, end_hole, courses ( par_per_hole ) )')
+      .select('id, strokes, hole_number, putts, players ( id, full_name, gender ), rounds!inner ( id, type, season_id, start_hole, end_hole, played_on, courses ( par_per_hole ) )')
       .eq('rounds.season_id', seasonId));
     if (e) { setError(e.message); setLoading(false); return; }
 
-    // group scores by player, then by round
-    const players = {}; // pid -> { name, gender, rounds: { rid: { par, scores:[], putts:[] } } }
+    // group by player, then round (shape used by the shared stat math)
+    const players = {};
     for (const r of scoreRows ?? []) {
       const pid = r.players?.id;
-      const rid = r.rounds?.id;
-      if (!pid || !rid) continue;
-      if (!players[pid]) {
-        players[pid] = { name: r.players.full_name, gender: r.players.gender, rounds: {} };
-      }
-      if (!players[pid].rounds[rid]) {
-        players[pid].rounds[rid] = {
-          par: r.rounds?.courses?.par_per_hole ?? [],
-          scores: [],
-          puttsSum: 0, puttsHoles: 0,
+      const rd = r.rounds;
+      if (!pid || !rd?.id) continue;
+      if (!players[pid]) players[pid] = { name: r.players.full_name, gender: r.players.gender, rounds: {} };
+      if (!players[pid].rounds[rd.id]) {
+        players[pid].rounds[rd.id] = {
+          id: rd.id, type: rd.type, playedOn: rd.played_on,
+          holeCount: (rd.end_hole ?? 18) - (rd.start_hole ?? 1) + 1,
+          par: rd.courses?.par_per_hole ?? [], sg: null, scores: [],
         };
       }
-      const R = players[pid].rounds[rid];
-      R.scores.push({ hole_number: r.hole_number, strokes: r.strokes });
-      if (r.putts != null) { R.puttsSum += r.putts; R.puttsHoles += 1; }
+      players[pid].rounds[rd.id].scores.push({ hole_number: r.hole_number, strokes: r.strokes, putts: r.putts });
     }
-
-    // compute per-player season aggregates
-    const list = Object.values(players).map((p) => {
-      const roundList = Object.values(p.rounds);
-      const totals = [];
-      let bestToPar = null;
-      let parsOrBetter = 0;
-      let puttsSum = 0, puttsRounds = 0;
-
-      for (const R of roundList) {
-        const total = roundTotal(R.scores);
-        totals.push(total);
-        const tp = toPar(R.scores, R.par);
-        if (bestToPar === null || tp < bestToPar) bestToPar = tp;
-        // pars or better: holes where strokes <= par
-        for (const s of R.scores) {
-          const hp = R.par[s.hole_number - 1];
-          if (hp && s.strokes <= hp) parsOrBetter += 1;
-        }
-        // putts per round only counts rounds where putts were logged
-        if (R.puttsHoles > 0) { puttsSum += R.puttsSum; puttsRounds += 1; }
-      }
-
-      return {
-        name: p.name,
-        gender: p.gender,
-        rounds: roundList.length,
-        average: scoringAverage(totals),
-        bestToPar,
-        parsOrBetter,
-        puttsPerRound: puttsRounds > 0 ? Math.round((puttsSum / puttsRounds) * 10) / 10 : null,
-      };
-    });
-
-    setRows(list);
+    setRows(Object.values(players).map((p) => ({ ...p, rounds: Object.values(p.rounds) })));
     setLoading(false);
   }
 
@@ -1924,6 +1890,12 @@ function Leaderboard() {
         ))}
       </select>
       <div className="spacer" />
+      <div style={{ display: 'flex', gap: 5 }}>
+        {[['18', '18-hole'], ['9', '9-hole']].map(([v, l]) => (
+          <button key={v} className={holes === v ? '' : 'secondary'} style={{ flex: 1, minHeight: 34, fontSize: 13 }} onClick={() => setHoles(v)}>{l}</button>
+        ))}
+      </div>
+      <div className="spacer" />
       <button className="secondary" onClick={load}>↻ Refresh</button>
     </div>
   );
@@ -1931,13 +1903,32 @@ function Leaderboard() {
   if (loading) return <>{seasonSwitcher}<p className="muted">Building the board…</p></>;
   if (error) return <>{seasonSwitcher}<div className="error">{error}</div></>;
 
-  if (!rows || rows.length === 0) {
+  // per-player numbers for the chosen round length
+  const N = holes === '9' ? 9 : 18;
+  const list = (rows ?? []).map((p) => {
+    const rs = p.rounds.filter((r) => inFilter(r, { holes, type: 'all' }));
+    if (rs.length === 0) return null;
+    const s = summarizeRounds(rs, N);
+    let parsOrBetter = 0;
+    for (const r of rs) for (const sc of r.scores) {
+      const hp = r.par[sc.hole_number - 1];
+      if (hp && sc.strokes <= hp) parsOrBetter += 1;
+    }
+    return {
+      name: p.name, gender: p.gender,
+      rounds: s.complete, unfinished: s.rounds - s.complete,
+      average: s.avg, bestToPar: s.best, parsOrBetter,
+      puttsPerRound: s.putts == null ? null : Math.round(s.putts * 10) / 10,
+    };
+  }).filter(Boolean);
+
+  if (list.length === 0) {
     return (
       <>
         {seasonSwitcher}
         <div className="card">
           <h2>Leaderboard</h2>
-          <p className="muted">No scores in {selectedSeason?.name ?? 'this season'} yet. Standings appear once rounds are recorded.</p>
+          <p className="muted">No {holes}-hole rounds in {selectedSeason?.name ?? 'this season'} yet. Standings appear once rounds are recorded.</p>
         </div>
       </>
     );
@@ -1992,7 +1983,9 @@ function Leaderboard() {
                   <td className="num">{p.puttsPerRound ?? '—'}</td>
                   <td className="num">{p.parsOrBetter}</td>
                   <td className="num">{p.bestToPar === null ? '—' : formatToPar(p.bestToPar)}</td>
-                  <td className="num">{p.rounds}</td>
+                  <td className="num">
+                    {p.rounds}{p.unfinished > 0 && <span className="muted" style={{ fontSize: 11 }}> +{p.unfinished}</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -2002,8 +1995,8 @@ function Leaderboard() {
     );
   };
 
-  const boys = rows.filter((p) => p.gender === 'boys');
-  const girls = rows.filter((p) => p.gender === 'girls');
+  const boys = list.filter((p) => p.gender === 'boys');
+  const girls = list.filter((p) => p.gender === 'girls');
 
   return (
     <>
@@ -2012,8 +2005,9 @@ function Leaderboard() {
       <Board title="Girls" players={girls} />
       <div className="card">
         <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-          Putts/round counts only rounds where putts were logged, so it may
-          cover fewer rounds than a player's scoring average.
+          Avg, Best and Rds count complete cards only; "+2" means two more cards are
+          missing holes (see Home → Cards with missing holes). Putts/round is worked
+          out from the holes where putts were logged. Pars+ counts every hole entered.
         </p>
       </div>
     </>
@@ -2631,7 +2625,7 @@ function PdfReports() {
   async function gatherData() {
     const { data: rows, error: e1 } = await fetchAll(() => supabase
       .from('scores')
-      .select('id, strokes, hole_number, putts, fairway_hit, green_in_regulation, players ( id, full_name, gender ), rounds!inner ( id, played_on, season_id, courses ( name, par_per_hole ) )')
+      .select('id, strokes, hole_number, putts, fairway_hit, green_in_regulation, players ( id, full_name, gender ), rounds!inner ( id, played_on, season_id, start_hole, end_hole, courses ( name, par_per_hole ) )')
       .eq('rounds.season_id', seasonId));
     if (e1) throw new Error(e1.message);
 
@@ -2653,6 +2647,7 @@ function PdfReports() {
       if (!players[pid].rounds[rid]) players[pid].rounds[rid] = {
         date: r.rounds?.played_on ?? '', course: r.rounds?.courses?.name ?? '',
         par: r.rounds?.courses?.par_per_hole ?? [], holes: {},
+        holeCount: (r.rounds?.end_hole ?? 18) - (r.rounds?.start_hole ?? 1) + 1,
       };
       players[pid].rounds[rid].holes[r.hole_number] = {
         strokes: r.strokes, putts: r.putts, fairway: r.fairway_hit, gir: r.green_in_regulation,
@@ -2679,11 +2674,13 @@ function PdfReports() {
       let parPlayed = 0;
       for (const h of holeNums) { const hp = R.par[h - 1]; if (hp) parPlayed += hp; }
       const toPar = parPlayed ? total - parPlayed : null;
-      if (toPar != null && (bestToPar == null || toPar < bestToPar)) bestToPar = toPar;
+      // a card only counts toward average / best / trend if every hole was entered
+      const complete = holeNums.length >= R.holeCount && holeNums.every((h) => R.par[h - 1] != null);
+      const nineHole = R.holeCount <= 9;
 
       const putts = holeNums.map(h => R.holes[h].putts).filter(v => v != null);
       const puttTotal = putts.length ? sum(putts) : null;
-      if (puttTotal != null) { puttRoundsSum += puttTotal; puttRoundsN += 1; }
+      if (puttTotal != null) { puttRoundsSum += puttTotal; puttRoundsN += putts.length; } // N = holes with putts
 
       for (const h of holeNums) {
         const cell = R.holes[h], hp = R.par[h - 1];
@@ -2699,21 +2696,29 @@ function PdfReports() {
       if (s) { udMade += s.up_down_made; udAtt += s.up_down_attempts; bnMade += s.bunker_made; bnAtt += s.bunker_attempts; }
 
       rounds.push({
-        date: R.date, course: R.course, total, toPar, putts: puttTotal,
+        date: R.date, course: R.course, total, toPar, putts: puttTotal, complete, nineHole,
         ud: s ? `${s.up_down_made}/${s.up_down_attempts}` : '-',
         bunker: s ? `${s.bunker_made}/${s.bunker_attempts}` : '-',
       });
     }
     rounds.sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
-    const nRounds = rounds.length;
-    const avg = nRounds ? Math.round((sum(rounds.map(r => r.total)) / nRounds) * 10) / 10 : 0;
+    // Average 18-hole cards; a player with only 9-hole rounds is averaged on those.
+    // Never mix 9s with 18s, and leave out cards with missing holes.
+    const full18 = rounds.filter((r) => r.complete && !r.nineHole);
+    const basis = full18.length ? full18 : rounds.filter((r) => r.complete && r.nineHole);
+    const basisHoles = full18.length ? 18 : 9;
+    const nRounds = basis.length;
+    const avg = nRounds ? Math.round((sum(basis.map(r => r.total)) / nRounds) * 10) / 10 : null;
+    for (const r of basis) if (bestToPar == null || r.toPar < bestToPar) bestToPar = r.toPar;
     const pct = (m, a) => (a > 0 ? Math.round((m / a) * 100) : null);
     const avgVs = (s, n) => (n ? Math.round((s / n) * 10) / 10 : null);
 
     return {
       name: p.name, gender: p.gender, nRounds, avg, bestToPar, blowups, rounds,
-      puttsRd: puttRoundsN ? Math.round((puttRoundsSum / puttRoundsN) * 10) / 10 : null,
+      trend: basis, avgLabel: basisHoles === 9 ? 'Scoring avg (9)' : 'Scoring avg',
+      // putts per hole logged, scaled to an 18-hole round
+      puttsRd: puttRoundsN ? Math.round((puttRoundsSum / puttRoundsN) * 18 * 10) / 10 : null,
       fwPct: pct(fwHit, fwTot), girPct: pct(girHit, girTot),
       udPct: pct(udMade, udAtt), sandPct: pct(bnMade, bnAtt),
       udMade, udAtt, bnMade, bnAtt,
@@ -2736,9 +2741,9 @@ function PdfReports() {
 
     // stat cards
     const cards = [
-      ['Scoring avg', String(s.avg)],
+      [s.avgLabel, s.avg == null ? '-' : String(s.avg)],
       ['Best round', fmtTP(s.bestToPar)],
-      ['Rounds', String(s.nRounds)],
+      ['Full rounds', String(s.nRounds)],
       ['Up & down', s.udPct == null ? '-' : s.udPct + '%'],
     ];
     const cw = W / 4;
@@ -2755,25 +2760,25 @@ function PdfReports() {
     // scoring trend
     doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
     doc.text('Scoring trend', L, y); y += 4;
-    if (s.rounds.length >= 2) {
+    if (s.trend.length >= 2) {
       const cx = L, cy = y, cW = W, cH = 34;
       doc.setDrawColor(180); doc.setLineWidth(0.3);
       doc.line(cx + 12, cy, cx + 12, cy + cH);
       doc.line(cx + 12, cy + cH, cx + cW, cy + cH);
-      const totals = s.rounds.map(r => r.total);
+      const totals = s.trend.map(r => r.total);
       const lo = Math.min(...totals) - 1, hi = Math.max(...totals) + 1;
-      const px = (i) => cx + 18 + (i / (s.rounds.length - 1)) * (cW - 24);
+      const px = (i) => cx + 18 + (i / (s.trend.length - 1)) * (cW - 24);
       const py = (v) => cy + (1 - (v - lo) / (hi - lo)) * cH;
       doc.setDrawColor(83, 74, 183); doc.setLineWidth(0.8);
-      for (let i = 1; i < s.rounds.length; i++) doc.line(px(i - 1), py(totals[i - 1]), px(i), py(totals[i]));
+      for (let i = 1; i < s.trend.length; i++) doc.line(px(i - 1), py(totals[i - 1]), px(i), py(totals[i]));
       doc.setFillColor(83, 74, 183);
-      s.rounds.forEach((r, i) => doc.circle(px(i), py(r.total), 1, 'F'));
+      s.trend.forEach((r, i) => doc.circle(px(i), py(r.total), 1, 'F'));
       doc.setFontSize(7); doc.setTextColor(140);
       doc.text('earliest to latest · lower is better', cx + cW, cy + cH + 4, { align: 'right' });
       doc.setTextColor(0); y += cH + 10;
     } else {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(140);
-      doc.text('Needs at least 2 rounds to chart a trend.', L, y + 5); doc.setTextColor(0); y += 12;
+      doc.text('Needs at least 2 full rounds to chart a trend.', L, y + 5); doc.setTextColor(0); y += 12;
     }
 
     // two-column: by hole type (bars) | short game (list)
@@ -2826,11 +2831,16 @@ function PdfReports() {
     y += 1.5; doc.line(L, y, R, y); y += 4;
     doc.setFont('helvetica', 'normal');
     s.rounds.forEach((r) => {
-      const cells = [String(r.date).slice(5), r.course, String(r.total), fmtTP(r.toPar), r.putts == null ? '-' : String(r.putts), r.ud, r.bunker];
+      const cells = [String(r.date).slice(5), r.course, String(r.total) + (r.complete ? '' : '*'), r.complete ? fmtTP(r.toPar) : '-', r.putts == null ? '-' : String(r.putts), r.ud, r.bunker];
       cells.forEach((c, i) => doc.text(String(c), colX[i], y));
       doc.setDrawColor(220); doc.line(L, y + 1.5, R, y + 1.5);
       y += 6;
     });
+    if (s.rounds.some((r) => !r.complete)) {
+      doc.setFontSize(7); doc.setTextColor(140);
+      doc.text('* card has missing holes, so it is not counted in the average, best round or trend.', L, y + 1);
+      doc.setTextColor(0); y += 6;
+    }
     return y;
   }
 
@@ -2846,7 +2856,7 @@ function PdfReports() {
     doc.setLineWidth(0.6); doc.line(L, y, R, y); y += 8;
 
     for (const team of ['boys', 'girls']) {
-      const list = summaries.filter(s => s.gender === team).sort((a, b) => a.avg - b.avg);
+      const list = summaries.filter(s => s.gender === team).sort((a, b) => (a.avg ?? 999) - (b.avg ?? 999));
       if (list.length === 0) continue;
       doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
       doc.text(team === 'boys' ? 'Boys' : 'Girls', L, y); y += 6;
@@ -2858,7 +2868,7 @@ function PdfReports() {
       y += 1.5; doc.line(L, y, R, y); y += 4;
       doc.setFont('helvetica', 'normal');
       list.forEach((s, i) => {
-        const cells = [String(i + 1), s.name, String(s.avg), fmtTP(s.bestToPar), String(s.nRounds),
+        const cells = [String(i + 1), s.name, s.avg == null ? '-' : String(s.avg) + (s.avgLabel.includes('9') ? ' (9)' : ''), fmtTP(s.bestToPar), String(s.nRounds),
           s.udPct == null ? '-' : String(s.udPct), s.sandPct == null ? '-' : String(s.sandPct),
           s.puttsRd == null ? '-' : String(s.puttsRd), String(s.blowups)];
         cells.forEach((c, j) => doc.text(String(c), colX[j], y));
