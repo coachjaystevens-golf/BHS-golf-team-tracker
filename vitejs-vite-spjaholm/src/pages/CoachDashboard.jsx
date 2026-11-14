@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase.js';
 import { roundTotal, teamScore, formatToPar, toPar, scoringAverage } from '../lib/scoring.js';
 import { useAuth } from '../AuthContext.jsx';
+import { fetchAll } from '../lib/fetchAll.js';
+import Compare from './Compare.jsx';
 
 export default function CoachDashboard() {
   const [tab, setTab] = useState('home');
@@ -18,6 +20,7 @@ export default function CoachDashboard() {
           <button className={tab === 'home' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => { setTab('home'); setShowManage(false); }}>Home</button>
           <button className={tab === 'team' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => { setTab('team'); setShowManage(false); }}>Scores</button>
           <button className={tab === 'board' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => { setTab('board'); setShowManage(false); }}>Board</button>
+          <button className={tab === 'compare' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => { setTab('compare'); setShowManage(false); }}>Compare</button>
           <button className={tab === 'goals' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => { setTab('goals'); setShowManage(false); }}>Goals</button>
           <button className={tab === 'roster' ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => { setTab('roster'); setShowManage(false); }}>Roster</button>
           <button className={showManage ? '' : 'secondary'} style={{ ...tabStyle, flex: '1 1 30%' }} onClick={() => setShowManage((v) => !v)}>Manage ▾</button>
@@ -37,6 +40,7 @@ export default function CoachDashboard() {
       {tab === 'home' && <Home onNavigate={(t) => { setTab(t); setShowManage(false); }} />}
       {tab === 'team' && <TeamScores />}
       {tab === 'board' && <Leaderboard />}
+      {tab === 'compare' && <Compare />}
       {tab === 'goals' && <CoachGoals />}
       {tab === 'roster' && <Roster />}
       {tab === 'courses' && <Courses />}
@@ -1472,10 +1476,10 @@ function Analysis() {
     setError('');
 
     // every score in this season, with player, course, and round info
-    const { data: rows, error: e } = await supabase
+    const { data: rows, error: e } = await fetchAll(() => supabase
       .from('scores')
-      .select('strokes, hole_number, putts, fairway_hit, green_in_regulation, players ( id, full_name, gender ), rounds!inner ( id, season_id, courses ( name, par_per_hole ) )')
-      .eq('rounds.season_id', seasonId);
+      .select('id, strokes, hole_number, putts, fairway_hit, green_in_regulation, players ( id, full_name, gender ), rounds!inner ( id, season_id, courses ( name, par_per_hole ) )')
+      .eq('rounds.season_id', seasonId));
     if (e) { setError(e.message); setLoading(false); return; }
 
     // build per-player aggregates
@@ -1829,10 +1833,10 @@ function Leaderboard() {
     setError('');
 
     // every score this season, with player + round range + course par
-    const { data: scoreRows, error: e } = await supabase
+    const { data: scoreRows, error: e } = await fetchAll(() => supabase
       .from('scores')
-      .select('strokes, hole_number, putts, players ( id, full_name, gender ), rounds!inner ( id, season_id, start_hole, end_hole, courses ( par_per_hole ) )')
-      .eq('rounds.season_id', seasonId);
+      .select('id, strokes, hole_number, putts, players ( id, full_name, gender ), rounds!inner ( id, season_id, start_hole, end_hole, courses ( par_per_hole ) )')
+      .eq('rounds.season_id', seasonId));
     if (e) { setError(e.message); setLoading(false); return; }
 
     // group scores by player, then by round
@@ -2203,10 +2207,10 @@ function ExportData() {
       setStatus('Pulling scores…');
 
       // 1) all scores this season, with player + course par + round info
-      const { data: scoreRows, error: e1 } = await supabase
+      const { data: scoreRows, error: e1 } = await fetchAll(() => supabase
         .from('scores')
-        .select('strokes, hole_number, putts, fairway_hit, green_in_regulation, players ( id, full_name, gender ), rounds!inner ( id, played_on, season_id, courses ( name, par_per_hole ) )')
-        .eq('rounds.season_id', seasonId);
+        .select('id, strokes, hole_number, putts, fairway_hit, green_in_regulation, players ( id, full_name, gender ), rounds!inner ( id, played_on, season_id, courses ( name, par_per_hole ) )')
+        .eq('rounds.season_id', seasonId));
       if (e1) throw new Error(e1.message);
 
       // 2) all short-game stats this season
@@ -2585,10 +2589,10 @@ function PdfReports() {
   useEffect(() => {
     (async () => {
       if (!seasonId) { setPlayers([]); return; }
-      const { data } = await supabase
+      const { data } = await fetchAll(() => supabase
         .from('scores')
-        .select('players ( id, full_name, gender ), rounds!inner ( season_id )')
-        .eq('rounds.season_id', seasonId);
+        .select('id, players ( id, full_name, gender ), rounds!inner ( season_id )')
+        .eq('rounds.season_id', seasonId));
       const byId = {};
       for (const r of data ?? []) {
         const p = r.players;
@@ -2611,10 +2615,10 @@ function PdfReports() {
 
   // ---- pull + shape all season data once ----
   async function gatherData() {
-    const { data: rows, error: e1 } = await supabase
+    const { data: rows, error: e1 } = await fetchAll(() => supabase
       .from('scores')
-      .select('strokes, hole_number, putts, fairway_hit, green_in_regulation, players ( id, full_name, gender ), rounds!inner ( id, played_on, season_id, courses ( name, par_per_hole ) )')
-      .eq('rounds.season_id', seasonId);
+      .select('id, strokes, hole_number, putts, fairway_hit, green_in_regulation, players ( id, full_name, gender ), rounds!inner ( id, played_on, season_id, courses ( name, par_per_hole ) )')
+      .eq('rounds.season_id', seasonId));
     if (e1) throw new Error(e1.message);
 
     const { data: sg, error: e2 } = await supabase
