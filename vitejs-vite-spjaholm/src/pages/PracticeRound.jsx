@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../AuthContext.jsx';
+import { useNearestCourse, NearestCourseNote } from '../lib/nearestCourse.jsx';
 import { yardsBetween, recencyWeightedAvg, MIN_SHOTS } from '../lib/caddieMath.js';
 
 export default function PracticeRound() {
@@ -68,6 +69,14 @@ export default function PracticeRound() {
       if (data?.length && !courseId) setCourseId(data[0].id);
     })();
   }, [showYardages]);
+
+  // auto-pick the course the phone is standing on (until the person picks one by hand)
+  const userPickedCourse = useRef(false);
+  const near = useNearestCourse({ enabled: showYardages, pos: pos });
+  useEffect(() => {
+    const id = near.match?.courseId;
+    if (id && !userPickedCourse.current && courses.some((c) => c.id === id)) setCourseId(id);
+  }, [near.match?.courseId, courses]);
 
   // Load green + hazard coordinates for the selected course.
   useEffect(() => {
@@ -252,12 +261,13 @@ export default function PracticeRound() {
         {showYardages && (
           <div style={{ marginTop: 8 }}>
             <label>Course</label>
-            <select value={courseId} onChange={(e) => setCourseId(e.target.value)}>
+            <select value={courseId} onChange={(e) => { userPickedCourse.current = true; setCourseId(e.target.value); }}>
               {courses.length === 0 && <option value="">Loading…</option>}
               {courses.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
+            <NearestCourseNote near={near} courses={courses} courseId={courseId} onUse={(id) => { userPickedCourse.current = true; setCourseId(id); }} />
 
             {courseChosen && !holeMapped && (
               <p className="muted" style={{ marginTop: 8, marginBottom: 0, fontSize: 13 }}>

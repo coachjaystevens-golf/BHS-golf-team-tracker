@@ -1186,6 +1186,7 @@ function Courses() {
   const [name, setName] = useState('');
   const [holes, setHoles] = useState(18);
   const [parText, setParText] = useState('4,4,4,3,5,4,4,3,5,4,4,4,3,5,4,4,3,5');
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
 
   // editing state
@@ -1204,14 +1205,23 @@ function Courses() {
 
   async function addCourse() {
     setError('');
+    if (adding) return; // ignore a double tap
+    const trimmed = name.trim();
+    if (!trimmed) { setError('Give the course a name first.'); return; }
+    if (courses.some((c) => c.name?.trim().toLowerCase() === trimmed.toLowerCase())) {
+      setError(`"${trimmed}" is already in the course list.`);
+      return;
+    }
     const par = parText.split(',').map((s) => Number(s.trim())).filter((n) => !isNaN(n));
     if (par.length !== Number(holes)) {
       setError(`You entered ${par.length} par values but the course has ${holes} holes.`);
       return;
     }
+    setAdding(true);
     const { error } = await supabase.from('courses').insert({
-      name: name.trim(), holes: Number(holes), par_per_hole: par,
+      name: trimmed, holes: Number(holes), par_per_hole: par,
     });
+    setAdding(false);
     if (error) { setError(error.message); return; }
     setName(''); load();
   }
@@ -1286,7 +1296,7 @@ function Courses() {
         <label>Par for each hole (comma-separated)</label>
         <input value={parText} onChange={(e) => setParText(e.target.value)} />
         <div className="spacer" />
-        <button onClick={addCourse}>Add course</button>
+        <button onClick={addCourse} disabled={adding || !name.trim()}>{adding ? 'Adding…' : 'Add course'}</button>
       </div>
 
       <div className="card">

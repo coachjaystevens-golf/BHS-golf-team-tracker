@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase.js';
 import { useAuth } from '../AuthContext.jsx';
+import { useNearestCourse, NearestCourseNote } from '../lib/nearestCourse.jsx';
 import { suggestClub } from '../lib/caddieMath.js';
 
 // Great-circle distance between two lat/lng points, returned in YARDS.
@@ -92,6 +93,14 @@ export default function Caddie() {
     return () => { if (watchId.current != null) navigator.geolocation.clearWatch(watchId.current); };
   }, []);
 
+  // auto-pick the course the phone is standing on (until the person picks one by hand)
+  const userPickedCourse = useRef(false);
+  const near = useNearestCourse({ enabled: true, pos: pos });
+  useEffect(() => {
+    const id = near.match?.courseId;
+    if (id && !userPickedCourse.current && courses.some((c) => c.id === id)) setCourseId(id);
+  }, [near.match?.courseId, courses]);
+
   async function loadCoords(cid) {
     if (!cid) return;
     const { data } = await supabase
@@ -141,11 +150,12 @@ export default function Caddie() {
           standing. Only holes that have been mapped show yardages.
         </p>
         <label>Course</label>
-        <select value={courseId} onChange={(e) => setCourseId(e.target.value)}>
+        <select value={courseId} onChange={(e) => { userPickedCourse.current = true; setCourseId(e.target.value); }}>
           {courses.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
+        <NearestCourseNote near={near} courses={courses} courseId={courseId} onUse={(id) => { userPickedCourse.current = true; setCourseId(id); }} />
         <div className="spacer" />
         <button className="secondary" onClick={() => navigate('/my-clubs')}>
           ⛳ Set up my clubs

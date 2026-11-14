@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase.js';
+import { useNearestCourse, NearestCourseNote } from '../lib/nearestCourse.jsx';
 
 // Great-circle distance in YARDS (same as Caddie/Capture).
 function yardsBetween(lat1, lng1, lat2, lng2) {
@@ -33,7 +34,8 @@ export default function CaptureHazards() {
       const { data } = await supabase
         .from('courses').select('id, name, holes').order('name');
       setCourses(data ?? []);
-      if (data?.length) setCourseId(data[0].id);
+      // No default course: captures used to land on whichever course sorted
+      // first ("12 Stones") when nobody changed the picker.
       setLoading(false);
     })();
   }, []);
@@ -114,6 +116,11 @@ export default function CaptureHazards() {
     loadHazards(courseId);
   }
 
+  // Suggest (never auto-select) the course the phone is on. When mapping a new
+  // course next door to a mapped one, an automatic pick could send captures to
+  // the wrong course, so the person always confirms with "Use it".
+  const near = useNearestCourse({ enabled: true, pos });
+
   if (loading) return <div className="content"><p className="muted">Loading…</p></div>;
 
   return (
@@ -130,10 +137,12 @@ export default function CaptureHazards() {
         </p>
         <label>Course</label>
         <select value={courseId} onChange={(e) => setCourseId(e.target.value)}>
-          {courses.map((c) => (
+          <option value="" disabled>Choose the course you're on…</option>
+          {courses.filter((c) => c.name?.trim()).map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
+        <NearestCourseNote near={near} courses={courses} courseId={courseId} onUse={setCourseId} />
       </div>
 
       {/* GPS status */}
@@ -153,7 +162,20 @@ export default function CaptureHazards() {
       {error && <div className="error">{error}</div>}
       {note && <div className="success">{note}</div>}
 
-      {Array.from({ length: holeCount }, (_, i) => i + 1).map((hole) => {
+      {!courseId && (
+        <div className="card"><p className="muted" style={{ margin: 0 }}>Pick a course above to start recording.</p></div>
+      )}
+
+      {courseId && (
+        <div
+          className="card"
+          style={{ position: 'sticky', top: 'calc(env(safe-area-inset-top) + 56px)', zIndex: 5, padding: '10px 14px', background: 'var(--green-700)', color: 'var(--white)' }}
+        >
+          Recording hazards for <strong>{course?.name}</strong>
+        </div>
+      )}
+
+      {courseId && Array.from({ length: holeCount }, (_, i) => i + 1).map((hole) => {
         const carry = hazards[hole]?.carry ?? {};
         const aim = hazards[hole]?.aim ?? {};
         const hasFront = carry.front_lat != null;
