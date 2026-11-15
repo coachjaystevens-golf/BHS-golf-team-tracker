@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { MyAssignedDrills } from './DrillAssignments.jsx';
 
 // One tap-friendly hub for everything practice-related. The 100-yard
 // challenge and putting drills used to live in the "More" sheet where
@@ -32,6 +33,7 @@ export default function Practice() {
         <p className="eyebrow">Practice</p>
         <h2 style={{ marginBottom: 0 }}>What are you working on?</h2>
       </div>
+      <MyAssignedDrills />
       {TILES.map((t) => (
         <div
           key={t.to}

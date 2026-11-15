@@ -5,6 +5,8 @@ import { useAuth } from '../AuthContext.jsx';
 import { fetchAll } from '../lib/fetchAll.js';
 import Compare from './Compare.jsx';
 import MissingHoles from './MissingHoles.jsx';
+import { AssignDrills } from './DrillAssignments.jsx';
+import SeasonRollover from './SeasonRollover.jsx';
 import { inFilter, summarize as summarizeRounds } from '../lib/compareStats.js';
 
 export default function CoachDashboard() {
@@ -48,7 +50,7 @@ export default function CoachDashboard() {
       {tab === 'courses' && <Courses />}
       {tab === 'seasons' && <Seasons />}
       {tab === 'analysis' && <Analysis />}
-      {tab === 'drillfocus' && <DrillFocus />}
+      {tab === 'drillfocus' && <><AssignDrills /><DrillFocus /></>}
       {tab === 'export' && <><ExportData /><PdfReports /></>}
     </div>
   );
@@ -1419,6 +1421,7 @@ function Seasons() {
 
   return (
     <>
+      <SeasonRollover onDone={load} />
       <div className="card">
         <h2>New season</h2>
         {error && <div className="error">{error}</div>}
