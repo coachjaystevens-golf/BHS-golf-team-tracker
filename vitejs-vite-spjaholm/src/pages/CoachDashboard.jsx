@@ -7,6 +7,7 @@ import Compare from './Compare.jsx';
 import MissingHoles from './MissingHoles.jsx';
 import { AssignDrills } from './DrillAssignments.jsx';
 import SeasonRollover from './SeasonRollover.jsx';
+import MatchResults from './MatchResults.jsx';
 import { inFilter, summarize as summarizeRounds } from '../lib/compareStats.js';
 
 export default function CoachDashboard() {
@@ -365,7 +366,7 @@ function TeamScores() {
       if (!seasonId) { setRounds([]); setSelected(''); return; }
       const { data } = await supabase
         .from('rounds')
-        .select('id, played_on, type, courses ( name )')
+        .select('id, played_on, type, start_hole, end_hole, courses ( name )')
         .eq('season_id', seasonId)
         .order('played_on', { ascending: false });
       setRounds(data ?? []);
@@ -473,6 +474,11 @@ function TeamScores() {
         <>
           <TeamCard title="Boys — top 4 of 5" data={result.boys} list={result.boysList} par={result.par} onSaved={loadScores} roundId={selected} />
           <TeamCard title="Girls — top 2 of 3" data={result.girls} list={result.girlsList} par={result.par} onSaved={loadScores} roundId={selected} />
+          {(() => {
+            const r = rounds.find((x) => x.id === selected);
+            const n = r ? (r.end_hole ?? 18) - (r.start_hole ?? 1) + 1 : 18;
+            return <MatchResults result={result} round={r} holeCount={n} startHole={r?.start_hole ?? 1} />;
+          })()}
         </>
       )}
     </>
