@@ -1,0 +1,29 @@
+name: Checks
+
+# Runs on every pull request (and on main after a merge): makes sure the app
+# still builds and the stat math still gives the right answers. A red X on a
+# pull request means "don't merge yet". Free on public repos.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vitejs-vite-spjaholm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: vitejs-vite-spjaholm/package-lock.json
+      - run: npm ci
+      - name: Stat math checks
+        run: npm test
+      - name: Build
+        run: npm run build

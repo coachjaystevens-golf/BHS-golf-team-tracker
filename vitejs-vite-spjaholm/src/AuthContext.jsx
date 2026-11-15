@@ -88,7 +88,14 @@ export function AuthProvider({ children }) {
       supabase.auth.signInWithPassword({ email, password }),
     signUp: (email, password) =>
       supabase.auth.signUp({ email, password }),
-    signOut: () => supabase.auth.signOut(),
+    signOut: async () => {
+      // forget this person's data kept on the phone for offline use
+      try {
+        const keys = await caches.keys();
+        await Promise.all(keys.filter((k) => k.startsWith('data-')).map((k) => caches.delete(k)));
+      } catch { /* no cache support: nothing to clear */ }
+      return supabase.auth.signOut();
+    },
     recovery,
     clearRecovery: () => setRecovery(false),
     requestPasswordReset: (email) =>
