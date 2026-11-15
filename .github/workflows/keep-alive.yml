@@ -17,11 +17,6 @@ jobs:
           echo "Beech responded: $code"
           [ "$code" -lt 500 ]
 
-      - name: Ping Gallatin
-        if: always()
-        run: |
-          code=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://hjlkrckyqcnjbtzpsidg.supabase.co/rest/v1/courses?select=id&limit=1" \
-            -H "apikey: sb_publishable_VXSe4b8BFFHPBV4WU3HoFA_IHL78HYd")
-          echo "Gallatin responded: $code"
-          [ "$code" -lt 500 ]
+      # To add a new school: copy the "Ping Beech" step above, rename it,
+      # add `if: always()` so one school's hiccup doesn't skip the others,
+      # and swap in that school's Project URL and publishable key.
