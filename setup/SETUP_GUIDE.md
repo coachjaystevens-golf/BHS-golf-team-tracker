@@ -56,7 +56,11 @@ Plan on about 45 minutes. You'll need a computer, not a phone.
 3. **Manage → Courses** or **+ Add a course:** add any courses not loaded in step 1.5.
 4. Tell players to add the app to their home screen (the app shows them how).
 
-## 5. Keep the free database awake
+## 5. Turn on weekly backups
+
+In the SQL Editor, run **`updates/2026-11-14_weekly_backups.sql`** once. Every Monday night it saves a copy of all the team's data inside the project (last 12 weeks kept), so mistakes can be undone.
+
+## 6. Keep the free database awake
 
 Free Supabase projects pause after **7 days** with no activity, including all summer. This repo pings each school every 3 days so that never happens.
 
